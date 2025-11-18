@@ -13,8 +13,6 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-IMAGE_API_URL = os.getenv("IMAGE_API_URL", "https://api.prodia.com/v1/sd/generate")
-IMAGE_API_KEY = os.getenv("IMAGE_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-pro')
@@ -175,40 +173,28 @@ def get_stats():
     conn.close()
     return total_users, premium_users
 
-async def generate_image(prompt):
+async def generate_image_pollinations(prompt):
     try:
+        safe_prompt = prompt.replace(" ", "%20")
+        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true"
+        
         async with aiohttp.ClientSession() as session:
-            headers = {"X-API-Key": IMAGE_API_KEY}
-            data = {
-                "model": "sdxl",
-                "prompt": prompt,
-                "negative_prompt": "ugly, blurry, low quality",
-                "steps": 20,
-                "cfg_scale": 7,
-                "width": 512,
-                "height": 512
-            }
-            async with session.post(IMAGE_API_URL, json=data, headers=headers) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    job_id = result.get("job")
-                    
-                    await asyncio.sleep(10)
-                    
-                    status_url = f"https://api.prodia.com/v1/job/{job_id}"
-                    async with session.get(status_url, headers=headers) as status_resp:
-                        status_data = await status_resp.json()
-                        if status_data.get("status") == "succeeded":
-                            return status_data.get("imageUrl")
+            async with session.get(image_url) as response:
+                if response.status == 200:
+                    return image_url
         return None
     except Exception as e:
         print(f"Image generation error: {e}")
         return None
 
+user_states = {}
+
 @app.on_message(filters.command("start"))
 async def start_command(client, message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or "Foydalanuvchi"
+    
+    user_states.pop(user_id, None)
     
     add_user(user_id, username)
     
@@ -244,6 +230,12 @@ async def start_command(client, message: Message):
         reply_markup=keyboard
     )
 
+@app.on_message(filters.command("cancel"))
+async def cancel_command(client, message: Message):
+    user_id = message.from_user.id
+    user_states.pop(user_id, None)
+    await message.reply_text("❌ Bekor qilindi. /start ni bosing.")
+
 @app.on_callback_query(filters.regex("check_sub"))
 async def check_sub_callback(client, callback_query):
     user_id = callback_query.from_user.id
@@ -269,9 +261,12 @@ async def generate_image_callback(client, callback_query):
         )
         return
     
+    user_states[user_id] = "waiting_image_prompt"
+    
     await callback_query.message.edit_text(
         "🎨 Rasm yaratish uchun tavsif yuboring:\n\n"
         f"📊 Qolgan limitingiz: {user[2] if not is_premium else '♾️ Cheksiz'}\n\n"
+        "Misol: 'a beautiful sunset over mountains'\n"
         "❌ Bekor qilish: /cancel"
     )
     await callback_query.answer()
@@ -290,6 +285,8 @@ async def ai_chat_callback(client, callback_query):
             show_alert=True
         )
         return
+    
+    user_states[user_id] = "ai_chat"
     
     await callback_query.message.edit_text(
         "💬 AI Chat rejimi yoqildi!\n\n"
@@ -379,6 +376,65 @@ async def admin_stats_callback(client, callback_query):
     
     await callback_query.answer(text, show_alert=True)
 
+@app.on_callback_query(filters.regex("add_channel"))
+async def add_channel_callback(client, callback_query):
+    if callback_query.from_user.id != ADMIN_ID:
+        return
+    
+    user_states[ADMIN_ID] = "waiting_channel_add"
+    await callback_query.message.edit_text(
+        "➕ Kanal qo'shish:\n\n"
+        "Kanal username yoki ID yuboring\n"
+        "Misol: @channelname\n"
+        "❌ Bekor qilish: /cancel"
+    )
+    await callback_query.answer()
+
+@app.on_callback_query(filters.regex("remove_channel"))
+async def remove_channel_callback(client, callback_query):
+    if callback_query.from_user.id != ADMIN_ID:
+        return
+    
+    channels = get_channels()
+    if not channels:
+        await callback_query.answer("❌ Kanallar yo'q!", show_alert=True)
+        return
+    
+    user_states[ADMIN_ID] = "waiting_channel_remove"
+    text = "➖ Kanal o'chirish:\n\nKanal ID yuboring:\n\n"
+    for ch in channels:
+        text += f"📢 {ch[1]} - ID: {ch[0]}\n"
+    text += "\n❌ Bekor qilish: /cancel"
+    
+    await callback_query.message.edit_text(text)
+    await callback_query.answer()
+
+@app.on_callback_query(filters.regex("give_premium"))
+async def give_premium_callback(client, callback_query):
+    if callback_query.from_user.id != ADMIN_ID:
+        return
+    
+    user_states[ADMIN_ID] = "waiting_premium_user"
+    await callback_query.message.edit_text(
+        "💎 Premium berish:\n\n"
+        "Foydalanuvchi ID yuboring\n"
+        "❌ Bekor qilish: /cancel"
+    )
+    await callback_query.answer()
+
+@app.on_callback_query(filters.regex("send_ad"))
+async def send_ad_callback(client, callback_query):
+    if callback_query.from_user.id != ADMIN_ID:
+        return
+    
+    user_states[ADMIN_ID] = "waiting_ad_message"
+    await callback_query.message.edit_text(
+        "📢 Reklama yuborish:\n\n"
+        "Xabar yuboring (matn yoki rasm)\n"
+        "❌ Bekor qilish: /cancel"
+    )
+    await callback_query.answer()
+
 @app.on_message(filters.text & filters.private)
 async def handle_messages(client, message: Message):
     user_id = message.from_user.id
@@ -389,6 +445,116 @@ async def handle_messages(client, message: Message):
     if contains_bad_words(message.text):
         await message.reply_text("⚠️ Taqiqlangan so'zdan foydalanmang!")
         return
+    
+    state = user_states.get(user_id)
+    
+    if state == "waiting_image_prompt":
+        check_and_reset_limits(user_id)
+        user = get_user(user_id)
+        is_premium = check_premium(user_id)
+        
+        if not is_premium and user[2] <= 0:
+            await message.reply_text("⚠️ Kunlik limitingiz tugadi!")
+            user_states.pop(user_id, None)
+            return
+        
+        wait_msg = await message.reply_text("🎨 Rasm yaratilmoqda, iltimos kuting...")
+        
+        try:
+            image_url = await generate_image_pollinations(message.text)
+            
+            if image_url:
+                await message.reply_photo(
+                    photo=image_url,
+                    caption=f"🎨 Rasm tayyor!\n📝 Tavsif: {message.text}"
+                )
+                
+                if not is_premium:
+                    update_limits(user_id, image_limit=user[2]-1)
+                    remaining = user[2] - 1
+                    await message.reply_text(f"✅ Qolgan limit: {remaining}")
+            else:
+                await message.reply_text("❌ Rasm yaratishda xatolik yuz berdi. Qaytadan urinib ko'ring.")
+            
+            await wait_msg.delete()
+        except Exception as e:
+            await wait_msg.delete()
+            await message.reply_text("❌ Xatolik yuz berdi. Qaytadan urinib ko'ring.")
+        
+        user_states.pop(user_id, None)
+        return
+    
+    elif state == "ai_chat":
+        check_and_reset_limits(user_id)
+        user = get_user(user_id)
+        is_premium = check_premium(user_id)
+        
+        if not is_premium and user[3] <= 0:
+            await message.reply_text("⚠️ Kunlik chat limitingiz tugadi!")
+            user_states.pop(user_id, None)
+            return
+        
+        try:
+            response = model.generate_content(message.text)
+            await message.reply_text(f"🤖 {response.text}")
+            
+            if not is_premium:
+                update_limits(user_id, chat_limit=user[3]-1)
+        except Exception as e:
+            await message.reply_text("❌ Xatolik yuz berdi. Qaytadan urinib ko'ring.")
+        return
+    
+    elif user_id == ADMIN_ID:
+        if state == "waiting_channel_add":
+            try:
+                channel_username = message.text.strip()
+                chat = await client.get_chat(channel_username)
+                add_channel(str(chat.id), channel_username)
+                await message.reply_text(f"✅ Kanal qo'shildi: {channel_username}")
+            except Exception as e:
+                await message.reply_text(f"❌ Xatolik: {str(e)}")
+            user_states.pop(ADMIN_ID, None)
+            return
+        
+        elif state == "waiting_channel_remove":
+            try:
+                channel_id = message.text.strip()
+                remove_channel(channel_id)
+                await message.reply_text("✅ Kanal o'chirildi!")
+            except:
+                await message.reply_text("❌ Xatolik yuz berdi!")
+            user_states.pop(ADMIN_ID, None)
+            return
+        
+        elif state == "waiting_premium_user":
+            try:
+                target_user_id = int(message.text.strip())
+                set_premium(target_user_id, 30)
+                await message.reply_text(f"✅ User {target_user_id} ga 30 kunlik Premium berildi!")
+            except:
+                await message.reply_text("❌ Noto'g'ri ID!")
+            user_states.pop(ADMIN_ID, None)
+            return
+        
+        elif state == "waiting_ad_message":
+            conn = sqlite3.connect('database.db')
+            c = conn.cursor()
+            c.execute("SELECT user_id FROM users")
+            users = c.fetchall()
+            conn.close()
+            
+            success = 0
+            for user in users:
+                try:
+                    await client.send_message(user[0], message.text)
+                    success += 1
+                    await asyncio.sleep(0.05)
+                except:
+                    pass
+            
+            await message.reply_text(f"✅ Reklama {success} ta foydalanuvchiga yuborildi!")
+            user_states.pop(ADMIN_ID, None)
+            return
     
     check_and_reset_limits(user_id)
     user = get_user(user_id)
