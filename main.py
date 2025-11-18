@@ -17,7 +17,7 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash")
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 app = Client("ai_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -292,7 +292,7 @@ async def handle_messages(client, message: Message):
     try:
         response = await asyncio.to_thread(model.generate_content, message.text)
         if hasattr(response, "candidates") and len(response.candidates) > 0:
-            text = response.candidates[0].output_text
+            text = response.candidates[0].content[0].text
         else:
             text = str(response)
         await message.reply_text(f"🤖 {text}")
