@@ -17,7 +17,7 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.Models.get("models/gemini-2.5-flash")
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 app = Client("ai_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
