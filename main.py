@@ -4,7 +4,7 @@ import asyncio
 import aiohttp
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
-from pyrogram.types import Message
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -114,6 +114,38 @@ def contains_bad_words(text):
             return True
     return False
 
+def get_channels():
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM channels")
+    channels = c.fetchall()
+    conn.close()
+    return channels
+
+def add_channel(channel_id, channel_username):
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO channels VALUES (?,?)", (channel_id, channel_username))
+    conn.commit()
+    conn.close()
+
+def remove_channel(channel_id):
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM channels WHERE channel_id=?", (channel_id,))
+    conn.commit()
+    conn.close()
+
+def get_stats():
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    total_users = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM users WHERE premium=1")
+    premium_users = c.fetchone()[0]
+    conn.close()
+    return total_users, premium_users
+
 async def generate_image_pollinations(prompt):
     try:
         safe_prompt = prompt.replace(" ", "%20")
@@ -126,6 +158,54 @@ async def generate_image_pollinations(prompt):
     except:
         return None
 
+user_states = {}
+
+@app.on_message(filters.command("start"))
+async def start_command(client, message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "Foydalanuvchi"
+    add_user(user_id, username)
+    if user_id == ADMIN_ID:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Statistika", callback_data="admin_stats")],
+            [InlineKeyboardButton("➕ Kanal qo'shish", callback_data="add_channel"),
+             InlineKeyboardButton("➖ Kanal o'chirish", callback_data="remove_channel")],
+            [InlineKeyboardButton("💎 Premium berish", callback_data="give_premium")],
+            [InlineKeyboardButton("📢 Reklama yuborish", callback_data="send_ad")]
+        ])
+        await message.reply_text("👨‍💼 Admin panelga xush kelibsiz!", reply_markup=keyboard)
+    else:
+        await message.reply_text(f"👋 Salom {username}!\nMatn yozing, rasm yaratish uchun 'rasm' so'zi bilan yuboring.")
+
+@app.on_callback_query()
+async def admin_callbacks(client, callback_query):
+    if callback_query.from_user.id != ADMIN_ID:
+        await callback_query.answer("❌ Siz admin emassiz!", show_alert=True)
+        return
+    data = callback_query.data
+    if data == "admin_stats":
+        total, premium = get_stats()
+        await callback_query.answer(f"👥 Jami: {total}, 💎 Premium: {premium}", show_alert=True)
+    elif data == "add_channel":
+        user_states[ADMIN_ID] = "waiting_channel_add"
+        await callback_query.message.edit_text("➕ Kanal qo'shish: ID yoki @username yuboring")
+    elif data == "remove_channel":
+        channels = get_channels()
+        if not channels:
+            await callback_query.answer("❌ Kanallar yo'q!", show_alert=True)
+            return
+        user_states[ADMIN_ID] = "waiting_channel_remove"
+        text = "➖ Kanal o'chirish:\n"
+        for ch in channels:
+            text += f"📢 {ch[1]} - ID: {ch[0]}\n"
+        await callback_query.message.edit_text(text)
+    elif data == "give_premium":
+        user_states[ADMIN_ID] = "waiting_premium_user"
+        await callback_query.message.edit_text("💎 Premium berish uchun foydalanuvchi ID yuboring")
+    elif data == "send_ad":
+        user_states[ADMIN_ID] = "waiting_ad_message"
+        await callback_query.message.edit_text("📢 Reklama yuborish uchun xabar yuboring")
+
 @app.on_message(filters.text & filters.private)
 async def handle_messages(client, message: Message):
     user_id = message.from_user.id
@@ -134,6 +214,52 @@ async def handle_messages(client, message: Message):
     if contains_bad_words(message.text):
         await message.reply_text("⚠️ Taqiqlangan so'zdan foydalanmang!")
         return
+
+    if user_id == ADMIN_ID:
+        state = user_states.get(ADMIN_ID)
+        if state == "waiting_channel_add":
+            try:
+                chat = await client.get_chat(message.text.strip())
+                add_channel(str(chat.id), message.text.strip())
+                await message.reply_text(f"✅ Kanal qo'shildi: {message.text.strip()}")
+            except Exception as e:
+                await message.reply_text(f"❌ Xatolik: {e}")
+            user_states.pop(ADMIN_ID, None)
+            return
+        elif state == "waiting_channel_remove":
+            try:
+                remove_channel(message.text.strip())
+                await message.reply_text("✅ Kanal o'chirildi!")
+            except:
+                await message.reply_text("❌ Xatolik yuz berdi!")
+            user_states.pop(ADMIN_ID, None)
+            return
+        elif state == "waiting_premium_user":
+            try:
+                target_user_id = int(message.text.strip())
+                set_premium(target_user_id, 30)
+                await message.reply_text(f"✅ User {target_user_id} ga 30 kunlik Premium berildi!")
+            except:
+                await message.reply_text("❌ Noto'g'ri ID!")
+            user_states.pop(ADMIN_ID, None)
+            return
+        elif state == "waiting_ad_message":
+            conn = sqlite3.connect('database.db')
+            c = conn.cursor()
+            c.execute("SELECT user_id FROM users")
+            users = c.fetchall()
+            conn.close()
+            success = 0
+            for u in users:
+                try:
+                    await client.send_message(u[0], message.text)
+                    success += 1
+                    await asyncio.sleep(0.05)
+                except:
+                    pass
+            await message.reply_text(f"✅ Reklama {success} ta foydalanuvchiga yuborildi!")
+            user_states.pop(ADMIN_ID, None)
+            return
 
     check_and_reset_limits(user_id)
     user = get_user(user_id)
@@ -154,9 +280,9 @@ async def handle_messages(client, message: Message):
             else:
                 await message.reply_text("❌ Rasm yaratishda xatolik yuz berdi.")
             await wait_msg.delete()
-        except:
+        except Exception as e:
             await wait_msg.delete()
-            await message.reply_text("❌ Xatolik yuz berdi.")
+            await message.reply_text(f"❌ Xatolik yuz berdi: {e}")
         return
 
     if not is_premium and user[3] <= 0:
@@ -173,6 +299,8 @@ async def handle_messages(client, message: Message):
         if not is_premium:
             update_limits(user_id, chat_limit=user[3]-1)
     except Exception as e:
-        await message.reply_text("❌ Xatolik yuz berdi.")
+        print("Chat AI xatolik:", e)
+        await message.reply_text(f"❌ Xatolik yuz berdi: {e}")
 
+print("✅ Bot ishga tushdi!")
 app.run()
