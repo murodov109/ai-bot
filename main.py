@@ -5,6 +5,7 @@ import aiohttp
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+from pyrogram.enums import ParseMode
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -320,7 +321,7 @@ async def my_stats_callback(client, callback_query):
     if is_premium:
         text += f"⏰ Premium amal qilish: {premium_until}"
     
-    await callback_query.message.edit_text(text, parse_mode="html")
+    await callback_query.message.edit_text(text, parse_mode=ParseMode.HTML)
     await callback_query.answer()
 
 @app.on_callback_query(filters.regex("help"))
@@ -334,7 +335,7 @@ async def help_callback(client, callback_query):
         "💎 Premium: Cheksiz\n\n"
         "⚠️ Taqiqlangan so'zlardan foydalanmang!"
     )
-    await callback_query.message.edit_text(text, parse_mode="html")
+    await callback_query.message.edit_text(text, parse_mode=ParseMode.HTML)
     await callback_query.answer()
 
 @app.on_callback_query(filters.regex("admin_panel"))
@@ -358,7 +359,7 @@ async def admin_panel_callback(client, callback_query):
         f"👥 Jami foydalanuvchilar: {total_users}\n"
         f"💎 Premium foydalanuvchilar: {premium_users}",
         reply_markup=keyboard,
-        parse_mode="html"
+        parse_mode=ParseMode.HTML
     )
     await callback_query.answer()
 
