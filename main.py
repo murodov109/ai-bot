@@ -40,7 +40,7 @@ lock = threading.Lock()
 BAD_WORDS = [
 "sex","porn","anal","hentai","18+","xxx","nude","erotic","fuck","boobs","dick","pussy","gandon",
 "shit","bitch","asshole","slut","whore","cum","milf","incest","pedo","rapist","rape","masturbate",
-"terror","bomb","seks","murder","drugs","cocaine","heroin","suicide","selfharm"
+"terror","bomb","seks","murder","drugs","cocaine","heroin","suicide","selfharm","underwear"
 ]
 
 def is_bad_prompt(text):
