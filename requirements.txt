@@ -3,4 +3,3 @@ TgCrypto==1.2.5
 python-dotenv==1.0.0
 google-generativeai==0.3.2
 aiohttp==3.9.1
-sqlite3
