@@ -205,34 +205,58 @@ async def generate_image_with_flux(prompt):
         print(f"Translated: {translated_prompt}")
         
         enhanced_prompt = f"{translated_prompt}, highly detailed, professional quality, 8k resolution, masterpiece"
+        safe_prompt = enhanced_prompt.replace(" ", "%20").replace(",", "%2C")
         
         apis = [
-            f"https://image.pollinations.ai/prompt/{enhanced_prompt.replace(' ', '%20')}?width=1024&height=1024&nologo=true&enhance=true&model=flux",
-            f"https://image.pollinations.ai/prompt/{enhanced_prompt.replace(' ', '%20')}?width=1024&height=1024&nologo=true&enhance=true&model=flux-realism",
-            f"https://hercai.onrender.com/v3/text2image?prompt={enhanced_prompt.replace(' ', '%20')}",
+            {
+                "url": f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true&model=flux",
+                "type": "direct"
+            },
+            {
+                "url": f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true&model=flux-realism",
+                "type": "direct"
+            },
+            {
+                "url": f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true",
+                "type": "direct"
+            },
+            {
+                "url": f"https://pollinations.ai/p/{safe_prompt}?width=1024&height=1024&nologo=true",
+                "type": "direct"
+            },
+            {
+                "url": f"https://hercai.onrender.com/v3/text2image?prompt={safe_prompt}",
+                "type": "json"
+            }
         ]
         
-        for api_url in apis:
+        for api in apis:
             try:
-                if "hercai" in api_url:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                async with aiohttp.ClientSession() as session:
+                    if api["type"] == "json":
+                        async with session.get(api["url"], timeout=aiohttp.ClientTimeout(total=60)) as response:
                             if response.status == 200:
                                 data = await response.json()
                                 if data.get("url"):
+                                    print(f"Success with: {api['url']}")
                                     return data["url"], translated_prompt
-                else:
-                    return api_url, translated_prompt
+                    else:
+                        async with session.head(api["url"], timeout=aiohttp.ClientTimeout(total=10)) as response:
+                            if response.status == 200:
+                                print(f"Success with: {api['url']}")
+                                return api["url"], translated_prompt
             except Exception as e:
-                print(f"API error: {e}")
+                print(f"Failed with {api['url']}: {e}")
                 continue
         
-        fallback_url = f"https://image.pollinations.ai/prompt/{enhanced_prompt.replace(' ', '%20')}?width=1024&height=1024&nologo=true"
+        print("All APIs failed, using fallback")
+        fallback_url = f"https://image.pollinations.ai/prompt/{safe_prompt}"
         return fallback_url, translated_prompt
         
     except Exception as e:
-        print(f"Image generation error: {e}")
-        return None, prompt
+        print(f"Critical error: {e}")
+        safe_prompt = prompt.replace(" ", "%20")
+        return f"https://image.pollinations.ai/prompt/{safe_prompt}", prompt
 
 user_states = {}
 
@@ -530,7 +554,7 @@ async def handle_messages(client, message: Message):
         wait_msg = await message.reply_text(
             "🔄 Matn tarjima qilinmoqda...\n"
             "🎨 AI rasm yaratmoqda...\n"
-            "⏳ 10-15 soniya kutib turing..."
+            "⏳ Iltimos 15-20 soniya kutib turing..."
         )
         
         try:
@@ -539,34 +563,53 @@ async def handle_messages(client, message: Message):
             if result and result[0]:
                 image_url, translated_text = result
                 
-                await message.reply_photo(
-                    photo=image_url,
-                    caption=(
-                        f"✅ <b>Rasm tayyor!</b>\n\n"
-                        f"📝 Sizning matningiz:\n<i>{message.text}</i>\n\n"
-                        f"🌐 Ingliz tiliga:\n<i>{translated_text}</i>\n\n"
-                        f"🤖 AI Model: <b>Flux Pro</b>"
-                    ),
-                    parse_mode=ParseMode.HTML
-                )
-                
-                if not is_premium:
-                    update_image_limit(user_id, user[2]-1)
-                    remaining = user[2] - 1
+                try:
+                    await message.reply_photo(
+                        photo=image_url,
+                        caption=(
+                            f"✅ <b>Rasm tayyor!</b>\n\n"
+                            f"📝 Sizning matningiz:\n<i>{message.text}</i>\n\n"
+                            f"🌐 Ingliz tiliga:\n<i>{translated_text}</i>\n\n"
+                            f"🤖 AI Model: <b>Flux Pro</b>"
+                        ),
+                        parse_mode=ParseMode.HTML
+                    )
+                    
+                    if not is_premium:
+                        update_image_limit(user_id, user[2]-1)
+                        remaining = user[2] - 1
+                        await message.reply_text(
+                            f"📊 Qolgan limit: <b>{remaining}</b>",
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=get_main_keyboard(user_id)
+                        )
+                    else:
+                        await message.reply_text("✅ Premium foydalanuvchi - cheksiz!", reply_markup=get_main_keyboard(user_id))
+                    
+                    await wait_msg.delete()
+                    
+                except Exception as photo_error:
+                    print(f"Photo send error: {photo_error}")
+                    await wait_msg.delete()
                     await message.reply_text(
-                        f"📊 Qolgan limit: <b>{remaining}</b>",
-                        parse_mode=ParseMode.HTML,
+                        f"✅ Rasm tayyor!\n\n"
+                        f"🔗 Link: {image_url}\n\n"
+                        f"📝 Tavsif: {message.text}",
                         reply_markup=get_main_keyboard(user_id)
                     )
-                else:
-                    await message.reply_text("✅ Premium foydalanuvchi - cheksiz!", reply_markup=get_main_keyboard(user_id))
             else:
-                await message.reply_text("❌ Rasm yaratishda xatolik yuz berdi. Qaytadan urinib ko'ring.", reply_markup=get_main_keyboard(user_id))
-            
-            await wait_msg.delete()
+                await wait_msg.delete()
+                await message.reply_text(
+                    "🔄 Qayta urinib ko'ring yoki boshqa tavsif yuboring.",
+                    reply_markup=get_main_keyboard(user_id)
+                )
         except Exception as e:
+            print(f"Main error: {e}")
             await wait_msg.delete()
-            await message.reply_text("❌ Xatolik yuz berdi. Qaytadan urinib ko'ring.", reply_markup=get_main_keyboard(user_id))
+            await message.reply_text(
+                "🔄 Biroz kutib, qaytadan urinib ko'ring.",
+                reply_markup=get_main_keyboard(user_id)
+            )
         
         user_states.pop(user_id, None)
         return
