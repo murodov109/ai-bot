@@ -22,40 +22,7 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-BAD_WORDS = [
-    "jinsi", "jinsiy", "seks", "sex", "porn", "xxx", "18+", "nude", "naked",
-    "sikish", "sik", "sikilish", "sikmoq", "sikdim", "sikaman", "sikasan",
-    "qotirib", "qotiraman", "qotirdim", "yalingoch", "yalangoch", "yalang",
-    "fuck", "fucking", "fucked", "fucker", "motherfucker", "fck", "fuk",
-    "shit", "shitty", "bullshit", "crap", "damn", "dammit",
-    "bitch", "bastard", "ass", "asshole", "arse", "dick", "cock",
-    "pussy", "cunt", "whore", "slut", "hoe", "thot", "nigga", "nigger",
-    "fag", "faggot", "dyke", "retard", "rape", "raping", "rapist",
-    "porno", "pornography", "pornhub", "xvideos", "xnxx", "redtube",
-    "hentai", "ecchi", "nsfw", "erotic", "erotica", "fetish", "kink",
-    "bdsm", "bondage", "dominatrix", "sadism", "masochism", "orgasm",
-    "masturbation", "masturbate", "jerk", "jerking", "wank", "wanking",
-    "blowjob", "handjob", "footjob", "rimjob", "cumshot", "facial",
-    "gangbang", "threesome", "foursome", "orgy", "swingers", "cuckold",
-    "anal", "vaginal", "oral", "boobs", "tits", "titties", "breast",
-    "nipple", "nipples", "areola", "penis", "vagina", "vulva", "clitoris",
-    "testicles", "balls", "scrotum", "anus", "rectum", "dildo", "vibrator",
-    "condom", "viagra", "cialis", "prostitute", "escort", "hooker", "stripper",
-    "секс", "порно", "xxx", "голый", "голая", "голые", "обнаженный", "обнаженная",
-    "трахать", "трахаться", "трахнуть", "ебать", "ебля", "еблю", "ебёт", "ебал",
-    "блять", "блядь", "сука", "хуй", "хуя", "хуи", "хуем", "хую", "хуйня",
-    "пизда", "пизду", "пизде", "пиздец", "пиздить", "дрочить", "дрочу", "дрочил",
-    "шлюха", "проститутка", "путана", "минет", "оргазм", "кончать", "кончил",
-    "мастурбация", "мастурбировать", "анал", "вагина", "влагалище", "анальный",
-    "член", "грудь", "сиськи", "сиски", "титьки", "титьки", "соски", "жопа",
-    "задница", "попа", "попку", "трах", "ебня", "порнуха", "эротика", "секас",
-    "фетиш", "извращение", "бдсм", "изнасилование", "насилие", "эскорт", "шалава",
-    "презерватив", "виагра", "дилдо", "вибратор", "стриптиз", "стриптизёрша",
-    "ochiq", "yoqimli", "topilgan", "yalingoch", "yalangoch", "ochilgan",
-    "ko'krak", "ko'krak", "elka", "dumba", "orqa qism",
-    "uyat", "uyatli", "sharmanda", "nopok", "iflos", "harom", "gunoh",
-    "fahsh", "fahisha", "fohisha", "buzuq", "beadab", "adabsiz", "odobsiz",
-    "beodob", "besharm", "uyatsiz", "noxush", "qoraygan", "batameez"
+BAD_WORDS = ["seks","jinsiy aloqa","porno","sex","jalab","sikay","am","erotic","fuck","qo'toq","hentai","xxx","18+","sikaman"
 ]
 
 def init_db():
