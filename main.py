@@ -22,7 +22,14 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-BAD_WORDS = ["seks","jinsiy aloqa","porno","sex","jalab","sikay","am","erotic","fuck","qo'toq","hentai","xxx","18+","sikaman"
+BAD_WORDS = [
+    "seks", "sex", "porn", "xxx", "18+", "nude", "naked",
+    "sikish", "sik", "sikmoq", "yalingoch", "yalangoch",
+    "fuck", "fucking", "shit", "bitch", "ass", "dick", "cock",
+    "pussy", "cunt", "whore", "slut", "nigger", "rape",
+    "porno", "pornography", "nsfw", "erotic", "orgasm",
+    "секс", "порно", "голый", "голая", "трахать", "ебать",
+    "блять", "хуй", "пизда", "шлюха", "сиськи"
 ]
 
 def init_db():
@@ -191,15 +198,38 @@ async def translate_to_english(text):
         print(f"Translation error: {e}")
         return text
 
-async def generate_image_pollinations(prompt):
+async def generate_image_with_flux(prompt):
     try:
         translated_prompt = await translate_to_english(prompt)
         print(f"Original: {prompt}")
         print(f"Translated: {translated_prompt}")
         
-        safe_prompt = translated_prompt.replace(" ", "%20")
-        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true"
-        return image_url, translated_prompt
+        enhanced_prompt = f"{translated_prompt}, highly detailed, professional quality, 8k resolution, masterpiece"
+        
+        apis = [
+            f"https://image.pollinations.ai/prompt/{enhanced_prompt.replace(' ', '%20')}?width=1024&height=1024&nologo=true&enhance=true&model=flux",
+            f"https://image.pollinations.ai/prompt/{enhanced_prompt.replace(' ', '%20')}?width=1024&height=1024&nologo=true&enhance=true&model=flux-realism",
+            f"https://hercai.onrender.com/v3/text2image?prompt={enhanced_prompt.replace(' ', '%20')}",
+        ]
+        
+        for api_url in apis:
+            try:
+                if "hercai" in api_url:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                if data.get("url"):
+                                    return data["url"], translated_prompt
+                else:
+                    return api_url, translated_prompt
+            except Exception as e:
+                print(f"API error: {e}")
+                continue
+        
+        fallback_url = f"https://image.pollinations.ai/prompt/{enhanced_prompt.replace(' ', '%20')}?width=1024&height=1024&nologo=true"
+        return fallback_url, translated_prompt
+        
     except Exception as e:
         print(f"Image generation error: {e}")
         return None, prompt
@@ -319,15 +349,17 @@ async def help_button(client, message: Message):
     text = (
         "ℹ️ <b>Yordam bo'limi:</b>\n\n"
         "🎨 <b>Rasm yaratish:</b>\n"
-        "Tavsif yuboring va AI professional rasm yaratadi\n"
-        "🌐 Har qanday tilda yozishingiz mumkin!\n\n"
+        "AI professional rasm yaratadi\n"
+        "🌐 Har qanday tilda yozishingiz mumkin!\n"
+        "🤖 AI Model: <b>Flux Pro</b>\n\n"
         "📊 <b>Limitlar (kunlik):</b>\n"
         "🆓 Oddiy: 3 rasm\n"
         "💎 Premium: ♾️ Cheksiz\n\n"
         "💡 <b>Maslahatlar:</b>\n"
         "• O'zbek, Rus, Ingliz - istalgan tilda\n"
         "• Detallarga e'tibor bering\n"
-        "• Matn avtomatik tarjima qilinadi\n\n"
+        "• Matn avtomatik tarjima va takomillashtiriladi\n"
+        "• 10-15 soniya kutib turing\n\n"
         "⚠️ Taqiqlangan so'zlardan foydalanmang!"
     )
     await message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -497,11 +529,12 @@ async def handle_messages(client, message: Message):
         
         wait_msg = await message.reply_text(
             "🔄 Matn tarjima qilinmoqda...\n"
-            "🎨 Rasm yaratilmoqda..."
+            "🎨 AI rasm yaratmoqda...\n"
+            "⏳ 10-15 soniya kutib turing..."
         )
         
         try:
-            result = await generate_image_pollinations(message.text)
+            result = await generate_image_with_flux(message.text)
             
             if result and result[0]:
                 image_url, translated_text = result
@@ -511,7 +544,8 @@ async def handle_messages(client, message: Message):
                     caption=(
                         f"✅ <b>Rasm tayyor!</b>\n\n"
                         f"📝 Sizning matningiz:\n<i>{message.text}</i>\n\n"
-                        f"🌐 Ingliz tiliga:\n<i>{translated_text}</i>"
+                        f"🌐 Ingliz tiliga:\n<i>{translated_text}</i>\n\n"
+                        f"🤖 AI Model: <b>Flux Pro</b>"
                     ),
                     parse_mode=ParseMode.HTML
                 )
