@@ -23,8 +23,39 @@ app = Client(
 )
 
 BAD_WORDS = [
-    "jinsi", "jinsiy", "seks", "sex", "porn", "xxx", 
-    "qiziqaman", "yotsex", "18+", "fuck", "shit", "nude"
+    "jinsi", "jinsiy", "seks", "sex", "porn", "xxx", "18+", "nude", "naked",
+    "sikish", "sik", "sikilish", "sikmoq", "sikdim", "sikaman", "sikasan",
+    "qotirib", "qotiraman", "qotirdim", "yalingoch", "yalangoch", "yalang",
+    "fuck", "fucking", "fucked", "fucker", "motherfucker", "fck", "fuk",
+    "shit", "shitty", "bullshit", "crap", "damn", "dammit",
+    "bitch", "bastard", "ass", "asshole", "arse", "dick", "cock",
+    "pussy", "cunt", "whore", "slut", "hoe", "thot", "nigga", "nigger",
+    "fag", "faggot", "dyke", "retard", "rape", "raping", "rapist",
+    "porno", "pornography", "pornhub", "xvideos", "xnxx", "redtube",
+    "hentai", "ecchi", "nsfw", "erotic", "erotica", "fetish", "kink",
+    "bdsm", "bondage", "dominatrix", "sadism", "masochism", "orgasm",
+    "masturbation", "masturbate", "jerk", "jerking", "wank", "wanking",
+    "blowjob", "handjob", "footjob", "rimjob", "cumshot", "facial",
+    "gangbang", "threesome", "foursome", "orgy", "swingers", "cuckold",
+    "anal", "vaginal", "oral", "boobs", "tits", "titties", "breast",
+    "nipple", "nipples", "areola", "penis", "vagina", "vulva", "clitoris",
+    "testicles", "balls", "scrotum", "anus", "rectum", "dildo", "vibrator",
+    "condom", "viagra", "cialis", "prostitute", "escort", "hooker", "stripper",
+    "секс", "порно", "xxx", "голый", "голая", "голые", "обнаженный", "обнаженная",
+    "трахать", "трахаться", "трахнуть", "ебать", "ебля", "еблю", "ебёт", "ебал",
+    "блять", "блядь", "сука", "хуй", "хуя", "хуи", "хуем", "хую", "хуйня",
+    "пизда", "пизду", "пизде", "пиздец", "пиздить", "дрочить", "дрочу", "дрочил",
+    "шлюха", "проститутка", "путана", "минет", "оргазм", "кончать", "кончил",
+    "мастурбация", "мастурбировать", "анал", "вагина", "влагалище", "анальный",
+    "член", "грудь", "сиськи", "сиски", "титьки", "титьки", "соски", "жопа",
+    "задница", "попа", "попку", "трах", "ебня", "порнуха", "эротика", "секас",
+    "фетиш", "извращение", "бдсм", "изнасилование", "насилие", "эскорт", "шалава",
+    "презерватив", "виагра", "дилдо", "вибратор", "стриптиз", "стриптизёрша",
+    "ochiq", "yoqimli", "topilgan", "yalingoch", "yalangoch", "ochilgan",
+    "ko'krak", "ko'krak", "elka", "dumba", "orqa qism",
+    "uyat", "uyatli", "sharmanda", "nopok", "iflos", "harom", "gunoh",
+    "fahsh", "fahisha", "fohisha", "buzuq", "beadab", "adabsiz", "odobsiz",
+    "beodob", "besharm", "uyatsiz", "noxush", "qoraygan", "batameez"
 ]
 
 def init_db():
@@ -172,14 +203,39 @@ def get_all_users():
     conn.close()
     return [user[0] for user in users]
 
+async def translate_to_english(text):
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = "https://translate.googleapis.com/translate_a/single"
+            params = {
+                'client': 'gtx',
+                'sl': 'auto',
+                'tl': 'en',
+                'dt': 't',
+                'q': text
+            }
+            async with session.get(url, params=params) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    translated = ''.join([item[0] for item in result[0]])
+                    return translated
+        return text
+    except Exception as e:
+        print(f"Translation error: {e}")
+        return text
+
 async def generate_image_pollinations(prompt):
     try:
-        safe_prompt = prompt.replace(" ", "%20")
+        translated_prompt = await translate_to_english(prompt)
+        print(f"Original: {prompt}")
+        print(f"Translated: {translated_prompt}")
+        
+        safe_prompt = translated_prompt.replace(" ", "%20")
         image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true"
-        return image_url
+        return image_url, translated_prompt
     except Exception as e:
         print(f"Image generation error: {e}")
-        return None
+        return None, prompt
 
 user_states = {}
 
@@ -261,7 +317,11 @@ async def generate_image_button(client, message: Message):
         "🎨 <b>Rasm yaratish</b>\n\n"
         f"📊 Qolgan limitingiz: <b>{user[2] if not is_premium else '♾️ Cheksiz'}</b>\n\n"
         "📝 Rasm uchun tavsif yuboring:\n"
-        "Misol: <i>a beautiful sunset over mountains, realistic, 4k</i>",
+        "🌐 Har qanday tilda yozishingiz mumkin!\n\n"
+        "Misol:\n"
+        "• <i>tog'lar ustida go'zal quyosh botishi</i>\n"
+        "• <i>a beautiful sunset over mountains</i>\n"
+        "• <i>красивый закат над горами</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=get_cancel_keyboard()
     )
@@ -292,14 +352,15 @@ async def help_button(client, message: Message):
     text = (
         "ℹ️ <b>Yordam bo'limi:</b>\n\n"
         "🎨 <b>Rasm yaratish:</b>\n"
-        "Tavsif yuboring va AI professional rasm yaratadi\n\n"
+        "Tavsif yuboring va AI professional rasm yaratadi\n"
+        "🌐 Har qanday tilda yozishingiz mumkin!\n\n"
         "📊 <b>Limitlar (kunlik):</b>\n"
         "🆓 Oddiy: 3 rasm\n"
         "💎 Premium: ♾️ Cheksiz\n\n"
         "💡 <b>Maslahatlar:</b>\n"
-        "• Ingliz tilida yozing (better quality)\n"
+        "• O'zbek, Rus, Ingliz - istalgan tilda\n"
         "• Detallarga e'tibor bering\n"
-        "• 'realistic', '4k', 'detailed' so'zlarini qo'shing\n\n"
+        "• Matn avtomatik tarjima qilinadi\n\n"
         "⚠️ Taqiqlangan so'zlardan foydalanmang!"
     )
     await message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -467,15 +528,24 @@ async def handle_messages(client, message: Message):
             user_states.pop(user_id, None)
             return
         
-        wait_msg = await message.reply_text("🎨 Rasm yaratilmoqda, iltimos kuting...")
+        wait_msg = await message.reply_text(
+            "🔄 Matn tarjima qilinmoqda...\n"
+            "🎨 Rasm yaratilmoqda..."
+        )
         
         try:
-            image_url = await generate_image_pollinations(message.text)
+            result = await generate_image_pollinations(message.text)
             
-            if image_url:
+            if result and result[0]:
+                image_url, translated_text = result
+                
                 await message.reply_photo(
                     photo=image_url,
-                    caption=f"✅ <b>Rasm tayyor!</b>\n\n📝 Tavsif: <i>{message.text}</i>",
+                    caption=(
+                        f"✅ <b>Rasm tayyor!</b>\n\n"
+                        f"📝 Sizning matningiz:\n<i>{message.text}</i>\n\n"
+                        f"🌐 Ingliz tiliga:\n<i>{translated_text}</i>"
+                    ),
                     parse_mode=ParseMode.HTML
                 )
                 
