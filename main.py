@@ -23,13 +23,8 @@ app = Client(
 )
 
 BAD_WORDS = [
-    "seks", "sex", "porn", "xxx", "18+", "nude", "naked",
-    "sikish", "sik", "sikmoq", "yalingoch", "yalangoch",
-    "fuck", "fucking", "shit", "bitch", "ass", "dick", "cock",
-    "pussy", "cunt", "whore", "slut", "nigger", "rape",
-    "porno", "pornography", "nsfw", "erotic", "orgasm",
-    "секс", "порно", "голый", "голая", "трахать", "ебать",
-    "блять", "хуй", "пизда", "шлюха", "сиськи"
+    "jinsi", "jinsiy", "seks", "sex", "porn", "xxx", 
+    "qiziqaman", "yotsex", "18+", "fuck", "shit", "nude"
 ]
 
 def init_db():
@@ -198,27 +193,18 @@ async def translate_to_english(text):
         print(f"Translation error: {e}")
         return text
 
-async def generate_image_with_flux(prompt):
+async def generate_image_pollinations(prompt):
     try:
         translated_prompt = await translate_to_english(prompt)
         print(f"Original: {prompt}")
         print(f"Translated: {translated_prompt}")
         
-        if len(translated_prompt) > 200:
-            translated_prompt = translated_prompt[:200]
-        
-        enhanced_prompt = f"{translated_prompt}, masterpiece, detailed"
-        safe_prompt = enhanced_prompt.replace(" ", "%20").replace(",", "%2C").replace("'", "%27").replace('"', "%22")
-        
-        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true"
-        
-        print(f"Generated URL: {image_url}")
+        safe_prompt = translated_prompt.replace(" ", "%20")
+        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true"
         return image_url, translated_prompt
-        
     except Exception as e:
-        print(f"Error in generation: {e}")
-        safe_prompt = prompt[:100].replace(" ", "%20")
-        return f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024", prompt[:100]
+        print(f"Image generation error: {e}")
+        return None, prompt
 
 user_states = {}
 
@@ -335,17 +321,15 @@ async def help_button(client, message: Message):
     text = (
         "ℹ️ <b>Yordam bo'limi:</b>\n\n"
         "🎨 <b>Rasm yaratish:</b>\n"
-        "AI professional rasm yaratadi\n"
-        "🌐 Har qanday tilda yozishingiz mumkin!\n"
-        "🤖 AI Model: <b>Flux Pro</b>\n\n"
+        "Tavsif yuboring va AI professional rasm yaratadi\n"
+        "🌐 Har qanday tilda yozishingiz mumkin!\n\n"
         "📊 <b>Limitlar (kunlik):</b>\n"
         "🆓 Oddiy: 3 rasm\n"
         "💎 Premium: ♾️ Cheksiz\n\n"
         "💡 <b>Maslahatlar:</b>\n"
         "• O'zbek, Rus, Ingliz - istalgan tilda\n"
         "• Detallarga e'tibor bering\n"
-        "• Matn avtomatik tarjima va takomillashtiriladi\n"
-        "• 10-15 soniya kutib turing\n\n"
+        "• Matn avtomatik tarjima qilinadi\n\n"
         "⚠️ Taqiqlangan so'zlardan foydalanmang!"
     )
     await message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -513,19 +497,23 @@ async def handle_messages(client, message: Message):
             user_states.pop(user_id, None)
             return
         
-        wait_msg = await message.reply_text("🎨 Rasm tayyorlanmoqda...")
+        wait_msg = await message.reply_text(
+            "🔄 Matn tarjima qilinmoqda...\n"
+            "🎨 Rasm yaratilmoqda..."
+        )
         
-        image_url, translated_text = await generate_image_with_flux(message.text)
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
+        try:
+            result = await generate_image_pollinations(message.text)
+            
+            if result and result[0]:
+                image_url, translated_text = result
+                
                 await message.reply_photo(
                     photo=image_url,
                     caption=(
                         f"✅ <b>Rasm tayyor!</b>\n\n"
-                        f"📝 Sizning matningiz:\n<i>{message.text[:100]}</i>\n\n"
-                        f"🌐 Tarjima:\n<i>{translated_text[:100]}</i>"
+                        f"📝 Sizning matningiz:\n<i>{message.text}</i>\n\n"
+                        f"🌐 Ingliz tiliga:\n<i>{translated_text}</i>"
                     ),
                     parse_mode=ParseMode.HTML
                 )
@@ -539,44 +527,14 @@ async def handle_messages(client, message: Message):
                         reply_markup=get_main_keyboard(user_id)
                     )
                 else:
-                    await message.reply_text("✅ Premium - cheksiz!", reply_markup=get_main_keyboard(user_id))
-                
-                await wait_msg.delete()
-                break
-                
-            except Exception as e:
-                print(f"Attempt {attempt + 1} failed: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2)
-                    image_url, translated_text = await generate_image_with_flux(message.text)
-                else:
-                    await wait_msg.delete()
-                    
-                    simple_prompt = message.text[:50].replace(" ", "%20")
-                    backup_url = f"https://image.pollinations.ai/prompt/{simple_prompt}?width=512&height=512"
-                    
-                    try:
-                        await message.reply_photo(
-                            photo=backup_url,
-                            caption=f"✅ Rasm tayyor!\n\n📝 {message.text[:100]}",
-                            parse_mode=ParseMode.HTML
-                        )
-                        
-                        if not is_premium:
-                            update_image_limit(user_id, user[2]-1)
-                            remaining = user[2] - 1
-                            await message.reply_text(
-                                f"📊 Qolgan limit: <b>{remaining}</b>",
-                                parse_mode=ParseMode.HTML,
-                                reply_markup=get_main_keyboard(user_id)
-                            )
-                        else:
-                            await message.reply_text("✅ Premium - cheksiz!", reply_markup=get_main_keyboard(user_id))
-                    except:
-                        await message.reply_text(
-                            "🔄 Iltimos qayta urinib ko'ring.",
-                            reply_markup=get_main_keyboard(user_id)
-                        )
+                    await message.reply_text("✅ Premium foydalanuvchi - cheksiz!", reply_markup=get_main_keyboard(user_id))
+            else:
+                await message.reply_text("❌ Rasm yaratishda xatolik yuz berdi. Qaytadan urinib ko'ring.", reply_markup=get_main_keyboard(user_id))
+            
+            await wait_msg.delete()
+        except Exception as e:
+            await wait_msg.delete()
+            await message.reply_text("❌ Xatolik yuz berdi. Qaytadan urinib ko'ring.", reply_markup=get_main_keyboard(user_id))
         
         user_states.pop(user_id, None)
         return
@@ -600,79 +558,6 @@ async def handle_messages(client, message: Message):
                 await message.reply_text("✅ Kanal o'chirildi!", reply_markup=get_admin_keyboard())
             except:
                 await message.reply_text("❌ Xatolik yuz berdi!", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            return
-        
-        elif state == "waiting_premium_user":
-            try:
-                target_user_id = int(message.text.strip())
-                set_premium(target_user_id, 30)
-                
-                try:
-                    await client.send_message(
-                        target_user_id,
-                        "🎉 Tabriklaymiz!\n\n"
-                        "💎 Sizga 30 kunlik Premium obuna berildi!\n"
-                        "♾️ Endi cheksiz rasm yaratishingiz mumkin!"
-                    )
-                except:
-                    pass
-                
-                await message.reply_text(f"✅ User {target_user_id} ga Premium berildi!", reply_markup=get_admin_keyboard())
-            except:
-                await message.reply_text("❌ Noto'g'ri ID!", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            return
-        
-        elif state == "waiting_ad_message":
-            users = get_all_users()
-            success = 0
-            failed = 0
-            
-            status_msg = await message.reply_text("📢 Reklama yuborilmoqda...")
-            
-            for uid in users:
-                try:
-                    if message.photo:
-                        await client.send_photo(uid, message.photo.file_id, caption=message.caption)
-                    else:
-                        await client.send_message(uid, message.text)
-                    success += 1
-                    await asyncio.sleep(0.05)
-                except:
-                    failed += 1
-            
-            await status_msg.edit_text(
-                f"✅ <b>Reklama yuborildi!</b>\n\n"
-                f"📊 Yuborildi: <b>{success}</b>\n"
-                f"❌ Xatolik: <b>{failed}</b>",
-                parse_mode=ParseMode.HTML
-            )
-            
-            await message.reply_text("🏠 Bosh sahifa", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            return
-    
-    await message.reply_text(
-        "❓ Buyruqni tushunmadim.\n"
-        "🎨 Rasm yaratish uchun tugmani bosing.",
-        reply_markup=get_main_keyboard(user_id)
-    )
-
-@app.on_message(filters.photo & filters.private)
-async def handle_photo(client, message: Message):
-    user_id = message.from_user.id
-    
-    if user_id == ADMIN_ID and user_states.get(ADMIN_ID) == "waiting_ad_message":
-        return
-    
-    await message.reply_text(
-        "📸 Rasm qabul qilindi, lekin men faqat matnli tavsif orqali rasm yarataman.\n"
-        "🎨 Rasm yaratish tugmasini bosing va tavsif yuboring."
-    )
-
-print("✅ Bot ishga tushdi!")
-app.run()=get_admin_keyboard())
             user_states.pop(ADMIN_ID, None)
             return
         
