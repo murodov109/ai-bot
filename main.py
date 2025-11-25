@@ -14,7 +14,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "your_bot_username")
 
 app = Client(
     "ai_bot",
@@ -40,22 +39,14 @@ def init_db():
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         image_limit INTEGER DEFAULT 3,
-        bonus_limit INTEGER DEFAULT 0,
         premium INTEGER DEFAULT 0,
         premium_until TEXT,
         last_reset TEXT,
-        join_date TEXT,
-        referrer_id INTEGER
+        join_date TEXT
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS channels (
         channel_id TEXT PRIMARY KEY,
         channel_username TEXT
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS referrals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        referrer_id INTEGER,
-        referred_id INTEGER,
-        date TEXT
     )''')
     conn.commit()
     conn.close()
@@ -70,32 +61,14 @@ def get_user(user_id):
     conn.close()
     return user
 
-def add_user(user_id, username, referrer_id=None):
+def add_user(user_id, username):
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     now = datetime.now().isoformat()
-    c.execute("INSERT OR IGNORE INTO users VALUES (?,?,3,0,0,NULL,?,?,?)",
-              (user_id, username, now, now, referrer_id))
+    c.execute("INSERT OR IGNORE INTO users VALUES (?,?,3,0,NULL,?,?)",
+              (user_id, username, now, now))
     conn.commit()
     conn.close()
-
-def add_referral(referrer_id, referred_id):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    now = datetime.now().isoformat()
-    c.execute("INSERT INTO referrals (referrer_id, referred_id, date) VALUES (?,?,?)",
-              (referrer_id, referred_id, now))
-    c.execute("UPDATE users SET bonus_limit = bonus_limit + 1 WHERE user_id=?", (referrer_id,))
-    conn.commit()
-    conn.close()
-
-def get_referral_count(user_id):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
-    count = c.fetchone()[0]
-    conn.close()
-    return count
 
 def update_image_limit(user_id, limit):
     conn = sqlite3.connect('database.db')
@@ -116,7 +89,7 @@ def reset_daily_limits(user_id):
 def check_and_reset_limits(user_id):
     user = get_user(user_id)
     if user:
-        last_reset = datetime.fromisoformat(user[6])
+        last_reset = datetime.fromisoformat(user[5])
         if datetime.now() - last_reset > timedelta(days=1):
             reset_daily_limits(user_id)
 
@@ -130,8 +103,8 @@ def set_premium(user_id, days=30):
 
 def check_premium(user_id):
     user = get_user(user_id)
-    if user and user[4] == 1:
-        if user[5] and datetime.now() < datetime.fromisoformat(user[5]):
+    if user and user[3] == 1:
+        if user[4] and datetime.now() < datetime.fromisoformat(user[4]):
             return True
         else:
             conn = sqlite3.connect('database.db')
@@ -193,10 +166,8 @@ def get_stats():
     total_users = c.fetchone()[0]
     c.execute("SELECT COUNT(*) FROM users WHERE premium=1")
     premium_users = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM referrals")
-    total_referrals = c.fetchone()[0]
     conn.close()
-    return total_users, premium_users, total_referrals
+    return total_users, premium_users
 
 def get_all_users():
     conn = sqlite3.connect('database.db')
@@ -227,7 +198,7 @@ async def translate_to_english(text):
         print(f"Translation error: {e}")
         return text
 
-async def generate_image_pollinations(prompt):
+async def generate_image_with_flux(prompt):
     try:
         translated_prompt = await translate_to_english(prompt)
         print(f"Original: {prompt}")
@@ -236,16 +207,16 @@ async def generate_image_pollinations(prompt):
         if len(translated_prompt) > 200:
             translated_prompt = translated_prompt[:200]
         
-        enhanced_prompt = f"{translated_prompt}, high quality, detailed"
-        safe_prompt = enhanced_prompt.replace(" ", "%20")
+        enhanced_prompt = f"{translated_prompt}, masterpiece, detailed"
+        safe_prompt = enhanced_prompt.replace(" ", "%20").replace(",", "%2C").replace("'", "%27").replace('"', "%22")
         
-        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true"
+        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true"
         
-        print(f"Image URL: {image_url}")
+        print(f"Generated URL: {image_url}")
         return image_url, translated_prompt
         
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in generation: {e}")
         safe_prompt = prompt[:100].replace(" ", "%20")
         return f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024", prompt[:100]
 
@@ -254,8 +225,7 @@ user_states = {}
 def get_main_keyboard(user_id):
     keyboard = [
         [KeyboardButton("🎨 Rasm yaratish")],
-        [KeyboardButton("📊 Statistikam"), KeyboardButton("👥 Referal")],
-        [KeyboardButton("ℹ️ Yordam")]
+        [KeyboardButton("📊 Statistikam"), KeyboardButton("ℹ️ Yordam")]
     ]
     if user_id == ADMIN_ID:
         keyboard.append([KeyboardButton("👨‍💼 Admin Panel")])
@@ -281,30 +251,7 @@ async def start_command(client, message: Message):
     username = message.from_user.username or "Foydalanuvchi"
     
     user_states.pop(user_id, None)
-    
-    referrer_id = None
-    if len(message.command) > 1:
-        try:
-            referrer_id = int(message.command[1])
-            if referrer_id == user_id:
-                referrer_id = None
-        except:
-            referrer_id = None
-    
-    existing_user = get_user(user_id)
-    if not existing_user:
-        add_user(user_id, username, referrer_id)
-        if referrer_id and get_user(referrer_id):
-            add_referral(referrer_id, user_id)
-            try:
-                await client.send_message(
-                    referrer_id,
-                    f"🎉 Tabriklaymiz!\n\n"
-                    f"👤 Yangi foydalanuvchi sizning havolangiz orqali qo'shildi!\n"
-                    f"🎁 +1 bonus limit qo'shildi!"
-                )
-            except:
-                pass
+    add_user(user_id, username)
     
     if not await check_subscription(client, user_id):
         channels = get_channels()
@@ -339,17 +286,10 @@ async def generate_image_button(client, message: Message):
     user = get_user(user_id)
     is_premium = check_premium(user_id)
     
-    total_limit = user[2] + user[3]
-    
-    if not is_premium and total_limit <= 0:
-        ref_count = get_referral_count(user_id)
+    if not is_premium and user[2] <= 0:
         await message.reply_text(
-            f"⚠️ Kunlik limitingiz tugadi!\n\n"
-            f"📊 Kunlik limit: 0/3\n"
-            f"🎁 Bonus limit: {user[3]}\n"
-            f"👥 Referallar: {ref_count}\n\n"
-            f"💡 Do'stlaringizni taklif qiling va bonus limitlar oling!\n"
-            f"👥 Referal bo'limiga o'ting",
+            "⚠️ Kunlik limitingiz tugadi!\n"
+            "💎 Premium obunani admin orqali oling.",
             reply_markup=get_main_keyboard(user_id)
         )
         return
@@ -358,15 +298,13 @@ async def generate_image_button(client, message: Message):
     
     await message.reply_text(
         "🎨 <b>Rasm yaratish</b>\n\n"
-        f"📊 Limitlar:\n"
-        f"📅 Kunlik: <b>{user[2]}/3</b>\n"
-        f"🎁 Bonus: <b>{user[3]}</b>\n"
-        f"💎 Status: <b>{'Premium ♾️' if is_premium else 'Oddiy'}</b>\n\n"
+        f"📊 Qolgan limitingiz: <b>{user[2] if not is_premium else '♾️ Cheksiz'}</b>\n\n"
         "📝 Rasm uchun tavsif yuboring:\n"
         "🌐 Har qanday tilda yozishingiz mumkin!\n\n"
         "Misol:\n"
         "• <i>tog'lar ustida go'zal quyosh botishi</i>\n"
-        "• <i>a beautiful sunset over mountains</i>",
+        "• <i>a beautiful sunset over mountains</i>\n"
+        "• <i>красивый закат над горами</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=get_cancel_keyboard()
     )
@@ -376,44 +314,19 @@ async def my_stats_button(client, message: Message):
     user_id = message.from_user.id
     user = get_user(user_id)
     is_premium = check_premium(user_id)
-    ref_count = get_referral_count(user_id)
     
     status = "💎 Premium" if is_premium else "🆓 Oddiy"
-    premium_until = "N/A" if not is_premium else user[5].split("T")[0]
+    premium_until = "N/A" if not is_premium else user[4].split("T")[0]
     
     text = (
         f"📊 <b>Sizning statistikangiz:</b>\n\n"
         f"👤 Status: <b>{status}</b>\n"
-        f"📅 Kunlik limit: <b>{user[2]}/3</b>\n"
-        f"🎁 Bonus limit: <b>{user[3]}</b>\n"
-        f"👥 Referallar: <b>{ref_count}</b>\n"
-        f"📅 Qo'shilgan: <code>{user[7].split('T')[0]}</code>\n"
+        f"🎨 Rasm limiti: <b>{user[2] if not is_premium else '♾️'}</b>\n"
+        f"📅 Qo'shilgan sana: <code>{user[6].split('T')[0]}</code>\n"
     )
     
     if is_premium:
-        text += f"\n⏰ Premium tugash: <code>{premium_until}</code>"
-    
-    await message.reply_text(text, parse_mode=ParseMode.HTML)
-
-@app.on_message(filters.regex("^👥 Referal$") & filters.private)
-async def referral_button(client, message: Message):
-    user_id = message.from_user.id
-    ref_count = get_referral_count(user_id)
-    user = get_user(user_id)
-    
-    ref_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-    
-    text = (
-        f"👥 <b>Referal tizimi</b>\n\n"
-        f"🎁 Har bir do'stingiz uchun +1 bonus limit!\n"
-        f"♾️ Bonus limitlar hech qachon yangilanmaydi!\n\n"
-        f"📊 Sizning statistikangiz:\n"
-        f"👥 Taklif qilganlar: <b>{ref_count}</b> ta\n"
-        f"🎁 Bonus limitlar: <b>{user[3]}</b> ta\n\n"
-        f"🔗 Sizning havolangiz:\n"
-        f"<code>{ref_link}</code>\n\n"
-        f"💡 Havolani do'stlaringizga yuboring!"
-    )
+        text += f"⏰ Premium tugash: <code>{premium_until}</code>"
     
     await message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -423,15 +336,16 @@ async def help_button(client, message: Message):
         "ℹ️ <b>Yordam bo'limi:</b>\n\n"
         "🎨 <b>Rasm yaratish:</b>\n"
         "AI professional rasm yaratadi\n"
-        "🌐 Har qanday tilda yozishingiz mumkin!\n\n"
-        "📊 <b>Limitlar:</b>\n"
-        "📅 Kunlik: 3 rasm (har kuni yangilanadi)\n"
-        "🎁 Bonus: Do'stlaringizni taklif qiling!\n"
+        "🌐 Har qanday tilda yozishingiz mumkin!\n"
+        "🤖 AI Model: <b>Flux Pro</b>\n\n"
+        "📊 <b>Limitlar (kunlik):</b>\n"
+        "🆓 Oddiy: 3 rasm\n"
         "💎 Premium: ♾️ Cheksiz\n\n"
-        "👥 <b>Referal tizimi:</b>\n"
-        "• 1 do'st = 1 bonus limit\n"
-        "• Bonus limitlar doim qoladi!\n"
-        "• Cheksiz do'st taklif qiling\n\n"
+        "💡 <b>Maslahatlar:</b>\n"
+        "• O'zbek, Rus, Ingliz - istalgan tilda\n"
+        "• Detallarga e'tibor bering\n"
+        "• Matn avtomatik tarjima va takomillashtiriladi\n"
+        "• 10-15 soniya kutib turing\n\n"
         "⚠️ Taqiqlangan so'zlardan foydalanmang!"
     )
     await message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -442,7 +356,7 @@ async def admin_panel_button(client, message: Message):
         await message.reply_text("❌ Sizda ruxsat yo'q!")
         return
     
-    total_users, premium_users, total_referrals = get_stats()
+    total_users, premium_users = get_stats()
     channels = get_channels()
     
     text = (
@@ -450,8 +364,7 @@ async def admin_panel_button(client, message: Message):
         f"👥 Jami foydalanuvchilar: <b>{total_users}</b>\n"
         f"💎 Premium: <b>{premium_users}</b>\n"
         f"🆓 Oddiy: <b>{total_users - premium_users}</b>\n"
-        f"📢 Majburiy kanallar: <b>{len(channels)}</b>\n"
-        f"👥 Jami referallar: <b>{total_referrals}</b>"
+        f"📢 Majburiy kanallar: <b>{len(channels)}</b>"
     )
     
     await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
@@ -461,15 +374,13 @@ async def admin_stats_button(client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     
-    total_users, premium_users, total_referrals = get_stats()
+    total_users, premium_users = get_stats()
     channels = get_channels()
     
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users WHERE date(join_date) = date('now')")
     today_users = c.fetchone()[0]
-    c.execute("SELECT SUM(bonus_limit) FROM users")
-    total_bonus = c.fetchone()[0] or 0
     conn.close()
     
     text = (
@@ -478,9 +389,7 @@ async def admin_stats_button(client, message: Message):
         f"💎 Premium: <b>{premium_users}</b>\n"
         f"🆓 Oddiy: <b>{total_users - premium_users}</b>\n"
         f"📢 Majburiy kanallar: <b>{len(channels)}</b>\n"
-        f"🆕 Bugungi yangi: <b>{today_users}</b>\n"
-        f"👥 Jami referallar: <b>{total_referrals}</b>\n"
-        f"🎁 Jami bonus limitlar: <b>{total_bonus}</b>"
+        f"🆕 Bugungi yangi: <b>{today_users}</b>"
     )
     
     await message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -492,7 +401,7 @@ async def users_list_button(client, message: Message):
     
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
-    c.execute("SELECT user_id, username, premium, bonus_limit, join_date FROM users ORDER BY join_date DESC LIMIT 50")
+    c.execute("SELECT user_id, username, premium, join_date FROM users ORDER BY join_date DESC LIMIT 50")
     users = c.fetchall()
     conn.close()
     
@@ -501,9 +410,8 @@ async def users_list_button(client, message: Message):
     for user in users:
         status = "💎" if user[2] == 1 else "🆓"
         username = user[1] if user[1] else "No username"
-        join_date = user[4].split("T")[0]
-        ref_count = get_referral_count(user[0])
-        text += f"{status} <code>{user[0]}</code> | @{username} | 🎁{user[3]} | 👥{ref_count} | {join_date}\n"
+        join_date = user[3].split("T")[0]
+        text += f"{status} <code>{user[0]}</code> | @{username} | {join_date}\n"
     
     await message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -600,52 +508,241 @@ async def handle_messages(client, message: Message):
         user = get_user(user_id)
         is_premium = check_premium(user_id)
         
-        total_limit = user[2] + user[3]
-        
-        if not is_premium and total_limit <= 0:
-            await message.reply_text("⚠️ Limitingiz tugadi!", reply_markup=get_main_keyboard(user_id))
+        if not is_premium and user[2] <= 0:
+            await message.reply_text("⚠️ Kunlik limitingiz tugadi!", reply_markup=get_main_keyboard(user_id))
             user_states.pop(user_id, None)
             return
         
         wait_msg = await message.reply_text("🎨 Rasm tayyorlanmoqda...")
         
-        image_url, translated_text = await generate_image_pollinations(message.text)
+        image_url, translated_text = await generate_image_with_flux(message.text)
         
-        try:
-            await message.reply_photo(
-                photo=image_url,
-                caption=(
-                    f"✅ <b>Rasm tayyor!</b>\n\n"
-                    f"📝 Tavsif: <i>{message.text[:100]}</i>\n"
-                    f"🌐 Tarjima: <i>{translated_text[:100]}</i>"
-                ),
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await message.reply_photo(
+                    photo=image_url,
+                    caption=(
+                        f"✅ <b>Rasm tayyor!</b>\n\n"
+                        f"📝 Sizning matningiz:\n<i>{message.text[:100]}</i>\n\n"
+                        f"🌐 Tarjima:\n<i>{translated_text[:100]}</i>"
+                    ),
+                    parse_mode=ParseMode.HTML
+                )
+                
+                if not is_premium:
+                    update_image_limit(user_id, user[2]-1)
+                    remaining = user[2] - 1
+                    await message.reply_text(
+                        f"📊 Qolgan limit: <b>{remaining}</b>",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=get_main_keyboard(user_id)
+                    )
+                else:
+                    await message.reply_text("✅ Premium - cheksiz!", reply_markup=get_main_keyboard(user_id))
+                
+                await wait_msg.delete()
+                break
+                
+            except Exception as e:
+                print(f"Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    image_url, translated_text = await generate_image_with_flux(message.text)
+                else:
+                    await wait_msg.delete()
+                    
+                    simple_prompt = message.text[:50].replace(" ", "%20")
+                    backup_url = f"https://image.pollinations.ai/prompt/{simple_prompt}?width=512&height=512"
+                    
+                    try:
+                        await message.reply_photo(
+                            photo=backup_url,
+                            caption=f"✅ Rasm tayyor!\n\n📝 {message.text[:100]}",
+                            parse_mode=ParseMode.HTML
+                        )
+                        
+                        if not is_premium:
+                            update_image_limit(user_id, user[2]-1)
+                            remaining = user[2] - 1
+                            await message.reply_text(
+                                f"📊 Qolgan limit: <b>{remaining}</b>",
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=get_main_keyboard(user_id)
+                            )
+                        else:
+                            await message.reply_text("✅ Premium - cheksiz!", reply_markup=get_main_keyboard(user_id))
+                    except:
+                        await message.reply_text(
+                            "🔄 Iltimos qayta urinib ko'ring.",
+                            reply_markup=get_main_keyboard(user_id)
+                        )
+        
+        user_states.pop(user_id, None)
+        return
+    
+    elif user_id == ADMIN_ID:
+        if state == "waiting_channel_add":
+            try:
+                channel_username = message.text.strip()
+                chat = await client.get_chat(channel_username)
+                add_channel(str(chat.id), channel_username)
+                await message.reply_text(f"✅ Kanal qo'shildi: {channel_username}", reply_markup=get_admin_keyboard())
+            except Exception as e:
+                await message.reply_text(f"❌ Xatolik: {str(e)}", reply_markup=get_admin_keyboard())
+            user_states.pop(ADMIN_ID, None)
+            return
+        
+        elif state == "waiting_channel_remove":
+            try:
+                channel_id = message.text.strip()
+                remove_channel(channel_id)
+                await message.reply_text("✅ Kanal o'chirildi!", reply_markup=get_admin_keyboard())
+            except:
+                await message.reply_text("❌ Xatolik yuz berdi!", reply_markup=get_admin_keyboard())
+            user_states.pop(ADMIN_ID, None)
+            return
+        
+        elif state == "waiting_premium_user":
+            try:
+                target_user_id = int(message.text.strip())
+                set_premium(target_user_id, 30)
+                
+                try:
+                    await client.send_message(
+                        target_user_id,
+                        "🎉 Tabriklaymiz!\n\n"
+                        "💎 Sizga 30 kunlik Premium obuna berildi!\n"
+                        "♾️ Endi cheksiz rasm yaratishingiz mumkin!"
+                    )
+                except:
+                    pass
+                
+                await message.reply_text(f"✅ User {target_user_id} ga Premium berildi!", reply_markup=get_admin_keyboard())
+            except:
+                await message.reply_text("❌ Noto'g'ri ID!", reply_markup=get_admin_keyboard())
+            user_states.pop(ADMIN_ID, None)
+            return
+        
+        elif state == "waiting_ad_message":
+            users = get_all_users()
+            success = 0
+            failed = 0
+            
+            status_msg = await message.reply_text("📢 Reklama yuborilmoqda...")
+            
+            for uid in users:
+                try:
+                    if message.photo:
+                        await client.send_photo(uid, message.photo.file_id, caption=message.caption)
+                    else:
+                        await client.send_message(uid, message.text)
+                    success += 1
+                    await asyncio.sleep(0.05)
+                except:
+                    failed += 1
+            
+            await status_msg.edit_text(
+                f"✅ <b>Reklama yuborildi!</b>\n\n"
+                f"📊 Yuborildi: <b>{success}</b>\n"
+                f"❌ Xatolik: <b>{failed}</b>",
                 parse_mode=ParseMode.HTML
             )
             
-            if not is_premium:
-                conn = sqlite3.connect('database.db')
-                c = conn.cursor()
-                if user[2] > 0:
-                    c.execute("UPDATE users SET image_limit = image_limit - 1 WHERE user_id=?", (user_id,))
-                else:
-                    c.execute("UPDATE users SET bonus_limit = bonus_limit - 1 WHERE user_id=?", (user_id,))
-                conn.commit()
-                conn.close()
+            await message.reply_text("🏠 Bosh sahifa", reply_markup=get_admin_keyboard())
+            user_states.pop(ADMIN_ID, None)
+            return
+    
+    await message.reply_text(
+        "❓ Buyruqni tushunmadim.\n"
+        "🎨 Rasm yaratish uchun tugmani bosing.",
+        reply_markup=get_main_keyboard(user_id)
+    )
+
+@app.on_message(filters.photo & filters.private)
+async def handle_photo(client, message: Message):
+    user_id = message.from_user.id
+    
+    if user_id == ADMIN_ID and user_states.get(ADMIN_ID) == "waiting_ad_message":
+        return
+    
+    await message.reply_text(
+        "📸 Rasm qabul qilindi, lekin men faqat matnli tavsif orqali rasm yarataman.\n"
+        "🎨 Rasm yaratish tugmasini bosing va tavsif yuboring."
+    )
+
+print("✅ Bot ishga tushdi!")
+app.run()=get_admin_keyboard())
+            user_states.pop(ADMIN_ID, None)
+            return
+        
+        elif state == "waiting_premium_user":
+            try:
+                target_user_id = int(message.text.strip())
+                set_premium(target_user_id, 30)
                 
-                updated_user = get_user(user_id)
-                await message.reply_text(
-                    f"📊 Limitlar:\n"
-                    f"📅 Kunlik: <b>{updated_user[2]}/3</b>\n"
-                    f"🎁 Bonus: <b>{updated_user[3]}</b>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=get_main_keyboard(user_id)
-                )
-            else:
-                await message.reply_text("✅ Premium - cheksiz!", reply_markup=get_main_keyboard(user_id))
+                try:
+                    await client.send_message(
+                        target_user_id,
+                        "🎉 Tabriklaymiz!\n\n"
+                        "💎 Sizga 30 kunlik Premium obuna berildi!\n"
+                        "♾️ Endi cheksiz rasm yaratishingiz mumkin!"
+                    )
+                except:
+                    pass
+                
+                await message.reply_text(f"✅ User {target_user_id} ga 30 kunlik Premium berildi!", reply_markup=get_admin_keyboard())
+            except:
+                await message.reply_text("❌ Noto'g'ri ID!", reply_markup=get_admin_keyboard())
+            user_states.pop(ADMIN_ID, None)
+            return
+        
+        elif state == "waiting_ad_message":
+            users = get_all_users()
+            success = 0
+            failed = 0
             
-            await wait_msg.delete()
+            status_msg = await message.reply_text("📢 Reklama yuborilmoqda...")
             
-        except Exception as e:
-            print(f"Error: {e}")
-            await wait_msg.delete()
-            await message.reply_text("🔄 Qayta urinib ko'ring.", reply
+            for user_id in users:
+                try:
+                    if message.photo:
+                        await client.send_photo(user_id, message.photo.file_id, caption=message.caption)
+                    else:
+                        await client.send_message(user_id, message.text)
+                    success += 1
+                    await asyncio.sleep(0.05)
+                except:
+                    failed += 1
+            
+            await status_msg.edit_text(
+                f"✅ <b>Reklama yuborildi!</b>\n\n"
+                f"📊 Yuborildi: <b>{success}</b>\n"
+                f"❌ Xatolik: <b>{failed}</b>",
+                parse_mode=ParseMode.HTML
+            )
+            
+            await message.reply_text("🏠 Bosh sahifa", reply_markup=get_admin_keyboard())
+            user_states.pop(ADMIN_ID, None)
+            return
+    
+    await message.reply_text(
+        "❓ Buyruqni tushunmadim.\n"
+        "🎨 Rasm yaratish uchun tugmani bosing.",
+        reply_markup=get_main_keyboard(user_id)
+    )
+
+@app.on_message(filters.photo & filters.private)
+async def handle_photo(client, message: Message):
+    user_id = message.from_user.id
+    
+    if user_id == ADMIN_ID and user_states.get(ADMIN_ID) == "waiting_ad_message":
+        return
+    
+    await message.reply_text(
+        "📸 Rasm qabul qilindi, lekin men faqat matnli tavsif orqali rasm yarataman.\n"
+        "🎨 Rasm yaratish tugmasini bosing va tavsif yuboring."
+    )
+
+print("✅ Bot ishga tushdi!")
+app.run()
