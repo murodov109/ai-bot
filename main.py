@@ -158,36 +158,26 @@ async def translate_to_english(text):
 async def generate_image(prompt):
     try:
         translated = await translate_to_english(prompt)
-        print(f"Original: {prompt}")
-        print(f"Translated: {translated}")
-        
         if len(translated) > 200:
             translated = translated[:200]
-        
         enhanced = f"{translated}, masterpiece, high quality, 8k, detailed"
         safe = enhanced.replace(" ", "%20").replace(",", "%2C").replace("'", "%27").replace('"', "%22")
-        
         urls = [
             f"https://image.pollinations.ai/prompt/{safe}?width=1024&height=1024&nologo=true&enhance=true",
             f"https://pollinations.ai/p/{safe}?width=1024&height=1024&nologo=true",
             f"https://image.pollinations.ai/prompt/{safe}?width=1024&height=1024"
         ]
-        
         for url in urls:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.head(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
                         if response.status == 200:
-                            print(f"Success: {url}")
                             return url, translated
             except:
                 continue
-        
         simple = translated[:100].replace(" ", "%20")
         return f"https://image.pollinations.ai/prompt/{simple}?width=1024&height=1024", translated
-        
-    except Exception as e:
-        print(f"Error: {e}")
+    except:
         simple = prompt[:100].replace(" ", "%20")
         return f"https://image.pollinations.ai/prompt/{simple}?width=1024&height=1024", prompt[:100]
 
@@ -211,35 +201,28 @@ async def start_cmd(client, message):
     user_id = message.from_user.id
     username = message.from_user.username or "User"
     user_states.pop(user_id, None)
-    
     existing = get_user(user_id)
     if not existing:
         add_user(user_id, username)
-    
     if not await check_subscription(client, user_id):
         channels = get_channels()
         channel_text = "\n".join([f"📢 {ch[1]}" for ch in channels])
         await message.reply_text(f"👋 Salom {username}!\n\n🔐 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:\n\n{channel_text}\n\n✅ Obuna bo'lgandan keyin /start ni qayta bosing", reply_markup=ReplyKeyboardRemove())
         return
-    
     await message.reply_text(f"👋 Salom {username}!\n\n🎨 Men professional AI rasm yaratish botiman!\n🖼 Har qanday tasvirlangan rasmni yaratib beraman.\n🌐 Har qanday tilda yozishingiz mumkin!\n\n📝 Kerakli bo'limni tanlang:", reply_markup=get_main_keyboard(user_id))
 
 @app.on_message(filters.regex("^🎨 Rasm yaratish$") & filters.private)
 async def gen_img_btn(client, message):
     user_id = message.from_user.id
-    
     if not await check_subscription(client, user_id):
         await message.reply_text("❌ Avval kanallarga obuna bo'ling! /start")
         return
-    
     check_and_reset_limits(user_id)
     user = get_user(user_id)
     is_premium = check_premium(user_id)
-    
     if not is_premium and user[2] <= 0:
         await message.reply_text(f"⚠️ Kunlik limitingiz tugadi!\n\n📊 Kunlik limit: 0/3\n💎 Premium obuna olish uchun adminга murojaat qiling", reply_markup=get_main_keyboard(user_id))
         return
-    
     user_states[user_id] = "waiting_image"
     await message.reply_text(f"🎨 <b>Rasm yaratish</b>\n\n📊 Limitlar:\n📅 Kunlik: <b>{user[2]}/3</b>\n💎 Status: <b>{'Premium ♾️' if is_premium else 'Oddiy'}</b>\n\n📝 Rasm uchun tavsif yuboring:\n🌐 Har qanday tilda yozishingiz mumkin!\n\nMisol:\n• <i>tog'lar ustida go'zal quyosh botishi</i>\n• <i>beautiful sunset over mountains</i>\n• <i>красивый закат над горами</i>", parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
 
@@ -248,13 +231,10 @@ async def my_stats_btn(client, message):
     user_id = message.from_user.id
     user = get_user(user_id)
     is_premium = check_premium(user_id)
-    
     status = "💎 Premium" if is_premium else "🆓 Oddiy"
     text = f"📊 <b>Sizning statistikangiz:</b>\n\n👤 Status: <b>{status}</b>\n📅 Kunlik limit: <b>{user[2]}/3</b>\n📅 Qo'shilgan: <code>{user[6].split('T')[0]}</code>"
-    
     if is_premium and user[4]:
         text += f"\n⏰ Premium tugash: <code>{user[4].split('T')[0]}</code>"
-    
     await message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @app.on_message(filters.regex("^ℹ️ Yordam$") & filters.private)
@@ -267,7 +247,6 @@ async def admin_panel_btn(client, message):
     if message.from_user.id != ADMIN_ID:
         await message.reply_text("❌ Sizda ruxsat yo'q!")
         return
-    
     total, premium = get_stats()
     channels = get_channels()
     text = f"👨‍💼 <b>Admin Panel</b>\n\n👥 Jami foydalanuvchilar: <b>{total}</b>\n💎 Premium: <b>{premium}</b>\n🆓 Oddiy: <b>{total - premium}</b>\n📢 Majburiy kanallar: <b>{len(channels)}</b>"
@@ -277,37 +256,31 @@ async def admin_panel_btn(client, message):
 async def admin_stats_btn(client, message):
     if message.from_user.id != ADMIN_ID:
         return
-    
     total, premium = get_stats()
     channels = get_channels()
-    
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users WHERE date(join_date) = date('now')")
     today = c.fetchone()[0]
     conn.close()
-    
     text = f"📊 <b>Umumiy statistika:</b>\n\n👥 Jami foydalanuvchilar: <b>{total}</b>\n💎 Premium: <b>{premium}</b>\n🆓 Oddiy: <b>{total - premium}</b>\n📢 Majburiy kanallar: <b>{len(channels)}</b>\n🆕 Bugungi yangi: <b>{today}</b>"
     await message.reply_text(text, parse_mode=ParseMode.HTML)
 
-@app.on_message(filters.regex("^👥 Foydalanuvchilar$") & filters.private)
+@app.on_message(filters.regex("^👥 Foydalanuuvchilar$") & filters.private)
 async def users_list_btn(client, message):
     if message.from_user.id != ADMIN_ID:
         return
-    
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute("SELECT user_id, username, premium, image_limit, join_date FROM users ORDER BY join_date DESC LIMIT 30")
     users = c.fetchall()
     conn.close()
-    
     text = "👥 <b>Oxirgi 30 ta foydalanuvchi:</b>\n\n"
     for u in users:
         st = "💎" if u[2] == 1 else "🆓"
         un = u[1] if u[1] else "NoUser"
         jd = u[4].split("T")[0]
         text += f"{st} <code>{u[0]}</code> | @{un} | 📊{u[3]}/3 | {jd}\n"
-    
     await message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @app.on_message(filters.regex("^➕ Kanal qo'shish$") & filters.private)
@@ -363,70 +336,47 @@ async def cancel_btn(client, message):
 @app.on_message(filters.text & filters.private)
 async def handle_text(client, message):
     user_id = message.from_user.id
-    
     if not await check_subscription(client, user_id):
         await message.reply_text("❌ Avval kanallarga obuna bo'ling! /start")
         return
-    
     if contains_bad_words(message.text):
         await message.reply_text("⚠️ Taqiqlangan so'zdan foydalanmang!")
         return
-    
     state = user_states.get(user_id)
-    
     if state == "waiting_image":
         check_and_reset_limits(user_id)
         user = get_user(user_id)
         is_premium = check_premium(user_id)
-        
         if not is_premium and user[2] <= 0:
             await message.reply_text("⚠️ Limitingiz tugadi!", reply_markup=get_main_keyboard(user_id))
             user_states.pop(user_id, None)
             return
-        
         wait = await message.reply_text("🎨 Rasm tayyorlanmoqda...\n⏳ Iltimos kutib turing...")
-        
         try:
             url, trans = await generate_image(message.text)
-            
-            await message.reply_photo(
-                photo=url,
-                caption=f"✅ <b>Rasm tayyor!</b>\n\n📝 Sizning matningiz:\n<i>{message.text[:150]}</i>\n\n🌐 Ingliz tiliga:\n<i>{trans[:150]}</i>",
-                parse_mode=ParseMode.HTML
-            )
-            
+            await message.reply_photo(photo=url, caption=f"✅ <b>Rasm tayyor!</b>\n\n📝 Sizning matningiz:\n<i>{message.text[:150]}</i>\n\n🌐 Ingliz tiliga:\n<i>{trans[:150]}</i>", parse_mode=ParseMode.HTML)
             if not is_premium:
                 conn = sqlite3.connect('database.db')
                 c = conn.cursor()
                 c.execute("UPDATE users SET image_limit = image_limit - 1 WHERE user_id=?", (user_id,))
                 conn.commit()
                 conn.close()
-                
                 upd = get_user(user_id)
-                await message.reply_text(
-                    f"📊 Qolgan limit: <b>{upd[2]}/3</b>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=get_main_keyboard(user_id)
-                )
+                await message.reply_text(f"📊 Qolgan limit: <b>{upd[2]}/3</b>", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user_id))
             else:
                 await message.reply_text("✅ Premium - cheksiz!", reply_markup=get_main_keyboard(user_id))
-            
             try:
                 await wait.delete()
             except:
                 pass
-                
-        except Exception as e:
-            print(f"Error: {e}")
+        except:
             try:
                 await wait.delete()
             except:
                 pass
             await message.reply_text("🔄 Xatolik yuz berdi. Iltimos qayta urinib ko'ring.", reply_markup=get_main_keyboard(user_id))
-        
         user_states.pop(user_id, None)
         return
-    
     elif user_id == ADMIN_ID:
         if state == "add_channel":
             try:
@@ -438,7 +388,6 @@ async def handle_text(client, message):
                 await message.reply_text(f"❌ Xatolik: {str(e)}", reply_markup=get_admin_keyboard())
             user_states.pop(ADMIN_ID, None)
             return
-            
         elif state == "remove_channel":
             try:
                 ch_id = message.text.strip()
@@ -448,7 +397,6 @@ async def handle_text(client, message):
                 await message.reply_text("❌ Xatolik yuz berdi!", reply_markup=get_admin_keyboard())
             user_states.pop(ADMIN_ID, None)
             return
-            
         elif state == "give_premium":
             try:
                 uid = int(message.text.strip())
@@ -462,13 +410,11 @@ async def handle_text(client, message):
                 await message.reply_text("❌ Noto'g'ri ID!", reply_markup=get_admin_keyboard())
             user_states.pop(ADMIN_ID, None)
             return
-            
         elif state == "send_ad":
             users = get_all_users()
             success = 0
             failed = 0
             status = await message.reply_text("📢 Reklama yuborilmoqda...")
-            
             for uid in users:
                 try:
                     if message.photo:
@@ -479,12 +425,10 @@ async def handle_text(client, message):
                     await asyncio.sleep(0.05)
                 except:
                     failed += 1
-            
             await status.edit_text(f"✅ <b>Reklama yuborildi!</b>\n\n📊 Yuborildi: <b>{success}</b>\n❌ Xatolik: <b>{failed}</b>", parse_mode=ParseMode.HTML)
             await message.reply_text("🏠 Bosh sahifa", reply_markup=get_admin_keyboard())
             user_states.pop(ADMIN_ID, None)
             return
-    
     await message.reply_text("❓ Buyruqni tushunmadim.\n🎨 Rasm yaratish tugmasini bosing.", reply_markup=get_main_keyboard(user_id))
 
 @app.on_message(filters.photo & filters.private)
