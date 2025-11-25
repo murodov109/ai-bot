@@ -200,7 +200,7 @@ async def generate_image_pollinations(prompt):
         print(f"Translated: {translated_prompt}")
         
         safe_prompt = translated_prompt.replace(" ", "%20")
-        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true"
+        image_url = f"https://replicate.live/flux?prompt={safe_prompt}?width=1024&height=1024&nologo=true&enhance=true"
         return image_url, translated_prompt
     except Exception as e:
         print(f"Image generation error: {e}")
