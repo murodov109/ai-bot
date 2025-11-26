@@ -4,7 +4,7 @@ import asyncio
 import aiohttp
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
-from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardRemove
+from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, Message, ReplyKeyboardRemove
 from pyrogram.enums import ParseMode
 from dotenv import load_dotenv
 
@@ -23,7 +23,7 @@ def init_db():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, image_limit INTEGER DEFAULT 3, premium INTEGER DEFAULT 0, premium_until TEXT, last_reset TEXT, join_date TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS channels (channel_id TEXT PRIMARY KEY, channel_username TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS channels (channel_id TEXT PRIMARY KEY, channel_username TEXT, is_sponsor INTEGER DEFAULT 0)''')
     conn.commit()
     conn.close()
 
@@ -84,15 +84,23 @@ def check_premium(user_id):
 def get_channels():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
-    c.execute("SELECT * FROM channels")
+    c.execute("SELECT * FROM channels WHERE is_sponsor=0")
     channels = c.fetchall()
     conn.close()
     return channels
 
-def add_channel(channel_id, channel_username):
+def get_sponsor_channels():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO channels VALUES (?,?)", (channel_id, channel_username))
+    c.execute("SELECT * FROM channels WHERE is_sponsor=1")
+    sponsors = c.fetchall()
+    conn.close()
+    return sponsors
+
+def add_channel(channel_id, channel_username, is_sponsor=0):
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO channels VALUES (?,?,?)", (channel_id, channel_username, is_sponsor))
     conn.commit()
     conn.close()
 
@@ -107,14 +115,22 @@ async def check_subscription(client, user_id):
     channels = get_channels()
     if not channels:
         return True
+    
+    not_subscribed = []
     for channel in channels:
         try:
-            member = await client.get_chat_member(channel[0], user_id)
+            chat_id = channel[0]
+            if not chat_id.startswith('-'):
+                chat_id = f"@{channel[1].replace('@', '')}"
+            
+            member = await client.get_chat_member(chat_id, user_id)
             if member.status not in ["member", "administrator", "creator"]:
-                return False
-        except:
-            return False
-    return True
+                not_subscribed.append(channel[1])
+        except Exception as e:
+            print(f"Check subscription error for {channel[1]}: {e}")
+            not_subscribed.append(channel[1])
+    
+    return len(not_subscribed) == 0
 
 def contains_bad_words(text):
     text_lower = text.lower()
@@ -165,55 +181,22 @@ async def generate_image_pro(prompt):
         translated = translated[:150]
     
     enhanced = f"{translated}, high quality, detailed, professional"
+    safe_prompt = enhanced.replace(" ", "%20").replace(",", "%2C")
     
     apis = [
-        {
-            "name": "Pollinations Enhanced",
-            "url": lambda p: f"https://image.pollinations.ai/prompt/{p}?width=1024&height=1024&nologo=true&enhance=true"
-        },
-        {
-            "name": "Pollinations Alt",
-            "url": lambda p: f"https://pollinations.ai/p/{p}?width=1024&height=1024&nologo=true"
-        },
-        {
-            "name": "Pollinations Standard",
-            "url": lambda p: f"https://image.pollinations.ai/prompt/{p}?width=1024&height=1024"
-        },
-        {
-            "name": "Hercai AI",
-            "url": lambda p: f"https://hercai.onrender.com/v3/text2image?prompt={p}",
-            "json": True
-        },
-        {
-            "name": "Prodia XL",
-            "url": lambda p: f"https://api.prodia.com/generate?prompt={p}&model=sdxl",
-            "json": True
-        }
+        {"name": "Pollinations Enhanced", "url": f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&enhance=true"},
+        {"name": "Pollinations Alt", "url": f"https://pollinations.ai/p/{safe_prompt}?width=1024&height=1024&nologo=true"},
+        {"name": "Pollinations Standard", "url": f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024"}
     ]
-    
-    safe_prompt = enhanced.replace(" ", "%20").replace(",", "%2C")
     
     for i, api in enumerate(apis):
         try:
             print(f"🔄 Trying {api['name']} ({i+1}/{len(apis)})")
-            
-            if api.get("json"):
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(api["url"](safe_prompt), timeout=aiohttp.ClientTimeout(total=30)) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            image_url = data.get("url") or data.get("imageUrl")
-                            if image_url:
-                                print(f"✅ Success with {api['name']}")
-                                return image_url, translated
-            else:
-                url = api["url"](safe_prompt)
-                async with aiohttp.ClientSession() as session:
-                    async with session.head(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
-                        if response.status == 200:
-                            print(f"✅ Success with {api['name']}")
-                            return url, translated
-                            
+            async with aiohttp.ClientSession() as session:
+                async with session.head(api["url"], timeout=aiohttp.ClientTimeout(total=5)) as response:
+                    if response.status == 200:
+                        print(f"✅ Success with {api['name']}")
+                        return api["url"], translated
         except Exception as e:
             print(f"❌ {api['name']} failed: {e}")
             await asyncio.sleep(0.3)
@@ -232,7 +215,7 @@ def get_main_keyboard(user_id):
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_admin_keyboard():
-    keyboard = [[KeyboardButton("📊 Barcha statistika")], [KeyboardButton("➕ Kanal qo'shish"), KeyboardButton("➖ Kanal o'chirish")], [KeyboardButton("💎 Premium berish"), KeyboardButton("📢 Reklama yuborish")], [KeyboardButton("👥 Foydalanuvchilar ro'yxati")], [KeyboardButton("🔙 Orqaga")]]
+    keyboard = [[KeyboardButton("📊 Barcha statistika")], [KeyboardButton("➕ Majburiy kanal"), KeyboardButton("➖ Majburiy kanal")], [KeyboardButton("➕ Zayafka kanal"), KeyboardButton("➖ Zayafka kanal")], [KeyboardButton("💎 Premium berish"), KeyboardButton("📢 Reklama yuborish")], [KeyboardButton("👥 Foydalanuvchilar ro'yxati")], [KeyboardButton("🔙 Orqaga")]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_cancel_keyboard():
@@ -247,13 +230,90 @@ async def start_command(client, message):
     if not get_user(user_id):
         add_user(user_id, username)
     
-    if not await check_subscription(client, user_id):
-        channels = get_channels()
-        channel_text = "\n".join([f"📢 {ch[1]}" for ch in channels])
-        await message.reply_text(f"👋 Salom {username}!\n\n🔐 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:\n\n{channel_text}\n\n✅ Obuna bo'lganingizdan keyin /start ni qayta bosing", reply_markup=ReplyKeyboardRemove())
+    channels = get_channels()
+    sponsors = get_sponsor_channels()
+    
+    if channels:
+        is_subscribed = await check_subscription(client, user_id)
+        if not is_subscribed:
+            keyboard = []
+            
+            for channel in channels:
+                ch_link = f"https://t.me/{channel[1].replace('@', '')}"
+                keyboard.append([InlineKeyboardButton(f"📢 {channel[1]}", url=ch_link)])
+            
+            for sponsor in sponsors:
+                sp_link = f"https://t.me/{sponsor[1].replace('@', '')}"
+                keyboard.append([InlineKeyboardButton(f"🎁 {sponsor[1]}", url=sp_link)])
+            
+            keyboard.append([InlineKeyboardButton("✅ Obunani tekshirish", callback_data="check_subscription")])
+            
+            channel_text = "📢 Majburiy kanallar:\n"
+            for i, ch in enumerate(channels, 1):
+                channel_text += f"{i}. {ch[1]}\n"
+            
+            sponsor_text = ""
+            if sponsors:
+                sponsor_text = "\n\n🎁 Zayafka kanallar:\n"
+                for i, sp in enumerate(sponsors, 1):
+                    sponsor_text += f"{i}. {sp[1]}\n"
+            
+            await message.reply_text(
+                f"👋 Salom {username}!\n\n"
+                f"🔐 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:\n\n"
+                f"{channel_text}"
+                f"{sponsor_text}\n"
+                f"✅ Obuna bo'lganingizdan keyin pastdagi tugmani bosing 👇",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+    
+    await message.reply_text(
+        f"👋 Salom {username}!\n\n"
+        f"🎨 Men professional AI rasm yaratish botiman!\n"
+        f"🖼 Har qanday tasvirlangan rasmni yaratib beraman.\n"
+        f"🌐 Har qanday tilda yozishingiz mumkin!\n\n"
+        f"📝 Kerakli bo'limni tanlang:",
+        reply_markup=get_main_keyboard(user_id)
+    )
+
+@app.on_callback_query(filters.regex("^check_subscription$"))
+async def check_subscription_callback(client, callback_query):
+    user_id = callback_query.from_user.id
+    username = callback_query.from_user.username or "Foydalanuvchi"
+    
+    channels = get_channels()
+    if not channels:
+        await callback_query.message.delete()
+        await callback_query.message.reply_text(
+            f"✅ Xush kelibsiz!\n\n"
+            f"👋 Salom {username}!\n\n"
+            f"🎨 Men professional AI rasm yaratish botiman!\n"
+            f"📝 Kerakli bo'limni tanlang:",
+            reply_markup=get_main_keyboard(user_id)
+        )
         return
     
-    await message.reply_text(f"👋 Salom {username}!\n\n🎨 Men professional AI rasm yaratish botiman!\n🖼 Har qanday tasvirlangan rasmni yaratib beraman.\n🌐 Har qanday tilda yozishingiz mumkin!\n\n📝 Kerakli bo'limni tanlang:", reply_markup=get_main_keyboard(user_id))
+    is_subscribed = await check_subscription(client, user_id)
+    
+    if is_subscribed:
+        await callback_query.message.delete()
+        await callback_query.message.reply_text(
+            f"✅ Obuna tasdiqlandi!\n\n"
+            f"👋 Salom {username}!\n\n"
+            f"🎨 Men professional AI rasm yaratish botiman!\n"
+            f"🖼 Har qanday tasvirlangan rasmni yaratib beraman.\n"
+            f"🌐 Har qanday tilda yozishingiz mumkin!\n\n"
+            f"📝 Kerakli bo'limni tanlang:",
+            reply_markup=get_main_keyboard(user_id)
+        )
+        await callback_query.answer("✅ Obuna tasdiqlandi!")
+    else:
+        await callback_query.answer(
+            "❌ Siz hali barcha majburiy kanallarga obuna bo'lmadingiz!\n\n"
+            "Iltimos barcha 📢 kanallarga obuna bo'ling!",
+            show_alert=True
+        )
 
 @app.on_message(filters.regex("^🎨 Rasm yaratish$") & filters.private)
 async def generate_image_button(client, message):
@@ -301,7 +361,8 @@ async def admin_panel_button(client, message):
     
     total, premium = get_stats()
     channels = get_channels()
-    text = f"👨‍💼 <b>Admin Panel</b>\n\n👥 Jami foydalanuvchilar: <b>{total}</b>\n💎 Premium: <b>{premium}</b>\n🆓 Oddiy: <b>{total - premium}</b>\n📢 Majburiy kanallar: <b>{len(channels)}</b>"
+    sponsors = get_sponsor_channels()
+    text = f"👨‍💼 <b>Admin Panel</b>\n\n👥 Jami foydalanuvchilar: <b>{total}</b>\n💎 Premium: <b>{premium}</b>\n🆓 Oddiy: <b>{total - premium}</b>\n📢 Majburiy kanallar: <b>{len(channels)}</b>\n🎁 Zayafka kanallar: <b>{len(sponsors)}</b>"
     await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
 
 @app.on_message(filters.regex("^📊 Barcha statistika$") & filters.private)
@@ -311,6 +372,7 @@ async def admin_stats_button(client, message):
     
     total, premium = get_stats()
     channels = get_channels()
+    sponsors = get_sponsor_channels()
     
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
@@ -318,7 +380,7 @@ async def admin_stats_button(client, message):
     today = c.fetchone()[0]
     conn.close()
     
-    text = f"📊 <b>Umumiy statistika:</b>\n\n👥 Jami foydalanuvchilar: <b>{total}</b>\n💎 Premium: <b>{premium}</b>\n🆓 Oddiy: <b>{total - premium}</b>\n📢 Majburiy kanallar: <b>{len(channels)}</b>\n🆕 Bugungi yangi: <b>{today}</b>"
+    text = f"📊 <b>Umumiy statistika:</b>\n\n👥 Jami foydalanuvchilar: <b>{total}</b>\n💎 Premium: <b>{premium}</b>\n🆓 Oddiy: <b>{total - premium}</b>\n📢 Majburiy kanallar: <b>{len(channels)}</b>\n🎁 Zayafka kanallar: <b>{len(sponsors)}</b>\n🆕 Bugungi yangi: <b>{today}</b>"
     await message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @app.on_message(filters.regex("^👥 Foydalanuvchilar ro'yxati$") & filters.private)
@@ -341,25 +403,46 @@ async def users_list_button(client, message):
     
     await message.reply_text(text, parse_mode=ParseMode.HTML)
 
-@app.on_message(filters.regex("^➕ Kanal qo'shish$") & filters.private)
+@app.on_message(filters.regex("^➕ Majburiy kanal$") & filters.private)
 async def add_channel_button(client, message):
     if message.from_user.id != ADMIN_ID:
         return
-    user_states[ADMIN_ID] = "waiting_channel_add"
-    await message.reply_text("➕ <b>Kanal qo'shish:</b>\n\nKanal username yoki ID yuboring\nMisol: <code>@channelname</code> yoki <code>-1001234567890</code>", parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
+    user_states[ADMIN_ID] = "add_required_channel"
+    await message.reply_text("➕ <b>Majburiy kanal qo'shish:</b>\n\nKanal username yoki ID yuboring\nMisol: <code>@channelname</code> yoki <code>-1001234567890</code>\n\n⚠️ Obuna tekshiriladi!", parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
 
-@app.on_message(filters.regex("^➖ Kanal o'chirish$") & filters.private)
+@app.on_message(filters.regex("^➖ Majburiy kanal$") & filters.private)
 async def remove_channel_button(client, message):
     if message.from_user.id != ADMIN_ID:
         return
     channels = get_channels()
     if not channels:
-        await message.reply_text("❌ Kanallar yo'q!", reply_markup=get_admin_keyboard())
+        await message.reply_text("❌ Majburiy kanallar yo'q!", reply_markup=get_admin_keyboard())
         return
-    user_states[ADMIN_ID] = "waiting_channel_remove"
-    text = "➖ <b>Kanal o'chirish:</b>\n\nKanal ID yuboring:\n\n"
+    user_states[ADMIN_ID] = "remove_channel"
+    text = "➖ <b>Majburiy kanal o'chirish:</b>\n\nKanal ID yuboring:\n\n"
     for ch in channels:
         text += f"📢 {ch[1]} - <code>{ch[0]}</code>\n"
+    await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
+
+@app.on_message(filters.regex("^➕ Zayafka kanal$") & filters.private)
+async def add_sponsor_button(client, message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    user_states[ADMIN_ID] = "add_sponsor_channel"
+    await message.reply_text("➕ <b>Zayafka kanal qo'shish:</b>\n\nKanal username yoki ID yuboring\nMisol: <code>@channelname</code> yoki <code>-1001234567890</code>\n\n✅ Obuna tekshirilmaydi, faqat reklama!", parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
+
+@app.on_message(filters.regex("^➖ Zayafka kanal$") & filters.private)
+async def remove_sponsor_button(client, message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    sponsors = get_sponsor_channels()
+    if not sponsors:
+        await message.reply_text("❌ Zayafka kanallar yo'q!", reply_markup=get_admin_keyboard())
+        return
+    user_states[ADMIN_ID] = "remove_sponsor"
+    text = "➖ <b>Zayafka kanal o'chirish:</b>\n\nKanal ID yuboring:\n\n"
+    for sp in sponsors:
+        text += f"🎁 {sp[1]} - <code>{sp[0]}</code>\n"
     await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
 
 @app.on_message(filters.regex("^💎 Premium berish$") & filters.private)
@@ -446,79 +529,4 @@ async def handle_messages(client, message):
             conn.commit()
             conn.close()
             upd = get_user(user_id)
-            await message.reply_text(f"📊 Qolgan limit: <b>{upd[2]}/3</b>", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user_id))
-        else:
-            await message.reply_text("✅ Premium - cheksiz!", reply_markup=get_main_keyboard(user_id))
-        
-        try:
-            await wait_msg.delete()
-        except:
-            pass
-        
-        user_states.pop(user_id, None)
-        return
-    
-    elif user_id == ADMIN_ID:
-        if state == "waiting_channel_add":
-            try:
-                ch_user = message.text.strip()
-                chat = await client.get_chat(ch_user)
-                add_channel(str(chat.id), ch_user)
-                await message.reply_text(f"✅ Kanal qo'shildi: {ch_user}", reply_markup=get_admin_keyboard())
-            except Exception as e:
-                await message.reply_text(f"❌ Xatolik: {str(e)}", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            return
-        elif state == "waiting_channel_remove":
-            try:
-                ch_id = message.text.strip()
-                remove_channel(ch_id)
-                await message.reply_text("✅ Kanal o'chirildi!", reply_markup=get_admin_keyboard())
-            except:
-                await message.reply_text("❌ Xatolik yuz berdi!", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            return
-        elif state == "waiting_premium_user":
-            try:
-                uid = int(message.text.strip())
-                set_premium(uid, 30)
-                try:
-                    await client.send_message(uid, "🎉 Tabriklaymiz!\n\n💎 Sizga 30 kunlik Premium obuna berildi!\n♾️ Endi cheksiz rasm yaratishingiz mumkin!")
-                except:
-                    pass
-                await message.reply_text(f"✅ User {uid} ga Premium berildi!", reply_markup=get_admin_keyboard())
-            except:
-                await message.reply_text("❌ Noto'g'ri ID!", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            return
-        elif state == "waiting_ad_message":
-            users = get_all_users()
-            success = 0
-            failed = 0
-            status = await message.reply_text("📢 Reklama yuborilmoqda...")
-            for uid in users:
-                try:
-                    if message.photo:
-                        await client.send_photo(uid, message.photo.file_id, caption=message.caption)
-                    else:
-                        await client.send_message(uid, message.text)
-                    success += 1
-                    await asyncio.sleep(0.05)
-                except:
-                    failed += 1
-            await status.edit_text(f"✅ <b>Reklama yuborildi!</b>\n\n📊 Yuborildi: <b>{success}</b>\n❌ Xatolik: <b>{failed}</b>", parse_mode=ParseMode.HTML)
-            await message.reply_text("🏠 Bosh sahifa", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            return
-    
-    await message.reply_text("❓ Buyruqni tushunmadim.\n🎨 Rasm yaratish tugmasini bosing.", reply_markup=get_main_keyboard(user_id))
-
-@app.on_message(filters.photo & filters.private)
-async def handle_photo(client, message):
-    user_id = message.from_user.id
-    if user_id == ADMIN_ID and user_states.get(ADMIN_ID) == "waiting_ad_message":
-        return
-    await message.reply_text("📸 Rasm qabul qilindi.\n\n🎨 Men faqat matnli tavsif orqali rasm yarataman.\nRasm yaratish tugmasini bosing va tavsif yuboring.")
-
-print("✅ Bot ishga tushdi!")
-app.run()
+            await message.reply_text(f"📊 Qolgan limit: <b>{upd[2]}/3</b>", parse_mode=ParseMode.HTML, reply_markup=get
