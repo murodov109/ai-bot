@@ -1,40 +1,41 @@
+import os
 import sqlite3
-import asyncio
-from pyrogram import filters
-from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton, Message
+from datetime import datetime
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ParseMode
+from dotenv import load_dotenv
 
-user_states = {}
+load_dotenv()
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-def get_admin_keyboard():
-    return ReplyKeyboardMarkup([
-        [KeyboardButton("📊 Barcha statistika")],
-        [KeyboardButton("➕ Kanal qo'shish"), KeyboardButton("➖ Kanal o'chirish")],
-        [KeyboardButton("💎 Premium berish"), KeyboardButton("📢 Reklama yuborish")],
-        [KeyboardButton("👥 Foydalanuvchilar")],
-        [KeyboardButton("🔙 Orqaga")]
-    ], resize_keyboard=True)
-
-def get_cancel_keyboard():
-    return ReplyKeyboardMarkup([[KeyboardButton("❌ Bekor qilish")]], resize_keyboard=True)
-
-def get_main_keyboard(user_id):
-    kb = [[KeyboardButton("🎨 Rasm yaratish")], [KeyboardButton("📊 Statistikam"), KeyboardButton("ℹ️ Yordam")]]
-    if user_id:
-        kb.append([KeyboardButton("👨‍💼 Admin Panel")])
-    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
-
-def get_stats():
+def get_advanced_stats():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
     total = c.fetchone()[0]
     c.execute("SELECT COUNT(*) FROM users WHERE premium=1")
     premium = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM users WHERE date(join_date) = date('now')")
+    today = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM users WHERE date(join_date) >= date('now', '-7 days')")
+    week = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM users WHERE date(join_date) >= date('now', '-30 days')")
+    month = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM channels")
+    channels = c.fetchone()[0]
     conn.close()
-    return total, premium
+    return total, premium, today, week, month, channels
 
-def get_channels():
+def search_user_by_id(user_id):
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
+    user = c.fetchone()
+    conn.close()
+    return user
+
+def get_channel_list():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute("SELECT * FROM channels")
@@ -42,22 +43,31 @@ def get_channels():
     conn.close()
     return channels
 
-def add_channel(channel_id, channel_username):
+def remove_premium(user_id):
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO channels VALUES (?,?)", (channel_id, channel_username))
+    c.execute("UPDATE users SET premium=0, premium_until=NULL WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
 
-def remove_channel(channel_id):
+def reset_user_limit(user_id):
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
-    c.execute("DELETE FROM channels WHERE channel_id=?", (channel_id,))
+    now = datetime.now().isoformat()
+    c.execute("UPDATE users SET image_limit=3, last_reset=? WHERE user_id=?", (now, user_id))
     conn.commit()
     conn.close()
+
+def get_top_active_users(limit=10):
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("SELECT user_id, username, image_limit FROM users WHERE premium=0 ORDER BY (3-image_limit) DESC LIMIT ?", (limit,))
+    users = c.fetchall()
+    conn.close()
+    return users
 
 def set_premium(user_id, days=30):
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     until = (datetime.now() + timedelta(days=days)).isoformat()
@@ -65,185 +75,187 @@ def set_premium(user_id, days=30):
     conn.commit()
     conn.close()
 
-def get_all_users():
+def remove_channel_db(channel_id):
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
-    c.execute("SELECT user_id FROM users")
-    users = c.fetchall()
+    c.execute("DELETE FROM channels WHERE channel_id=?", (channel_id,))
+    conn.commit()
     conn.close()
-    return [u[0] for u in users]
 
-def setup_admin_handlers(app, ADMIN_ID):
+def setup_admin_panel(app: Client):
     
-    @app.on_message(filters.regex("^👨‍💼 Admin Panel$") & filters.private)
-    async def admin_panel(client, message):
-        if message.from_user.id != ADMIN_ID:
-            return
-        
-        total, premium = get_stats()
-        channels = get_channels()
-        await message.reply_text(
-            f"👨‍💼 <b>Admin Panel</b>\n\n"
-            f"👥 Users: <b>{total}</b>\n"
-            f"💎 Premium: <b>{premium}</b>\n"
-            f"📢 Channels: <b>{len(channels)}</b>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_admin_keyboard()
+    @app.on_message(filters.command("panel") & filters.user(ADMIN_ID))
+    async def panel_command(client, message):
+        total, premium, today, week, month, channels = get_advanced_stats()
+        text = (
+            f"📊 <b>Kengaytirilgan Admin Panel</b>\n\n"
+            f"👥 Jami: <b>{total}</b> | 💎 Premium: <b>{premium}</b>\n"
+            f"🆕 Bugun: <b>{today}</b> | 📅 Hafta: <b>{week}</b> | 📆 Oy: <b>{month}</b>\n"
+            f"📢 Kanallar: <b>{channels}</b>\n\n"
+            f"🔍 <b>Qo'shimcha funksiyalar:</b>\n"
+            f"/search [ID] - Foydalanuvchi qidirish\n"
+            f"/channels - Barcha kanallar\n"
+            f"/topactive - Eng faol foydalanuvchilar\n"
+            f"/removepremium [ID] - Premium olib tashlash\n"
+            f"/resetlimit [ID] - Limitni tiklash\n"
+            f"/backup - Database zaxirasi"
         )
-    
-    @app.on_message(filters.regex("^📊 Barcha statistika$") & filters.private)
-    async def admin_stats(client, message):
-        if message.from_user.id != ADMIN_ID:
-            return
-        
-        total, premium = get_stats()
-        channels = get_channels()
-        
-        conn = sqlite3.connect('database.db')
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM users WHERE date(join_date) = date('now')")
-        today = c.fetchone()[0]
-        conn.close()
-        
-        await message.reply_text(
-            f"📊 <b>Stats:</b>\n\n"
-            f"👥 Total: <b>{total}</b>\n"
-            f"💎 Premium: <b>{premium}</b>\n"
-            f"🆕 Today: <b>{today}</b>\n"
-            f"📢 Channels: <b>{len(channels)}</b>",
-            parse_mode=ParseMode.HTML
-        )
-    
-    @app.on_message(filters.regex("^👥 Foydalanuvchilar$") & filters.private)
-    async def users_list(client, message):
-        if message.from_user.id != ADMIN_ID:
-            return
-        
-        conn = sqlite3.connect('database.db')
-        c = conn.cursor()
-        c.execute("SELECT user_id, username, premium, image_limit FROM users ORDER BY join_date DESC LIMIT 30")
-        users = c.fetchall()
-        conn.close()
-        
-        text = "👥 <b>Last 30:</b>\n\n"
-        for u in users:
-            st = "💎" if u[2] == 1 else "🆓"
-            un = u[1] if u[1] else "NoUser"
-            text += f"{st} <code>{u[0]}</code> | @{un} | {u[3]}/3\n"
-        
         await message.reply_text(text, parse_mode=ParseMode.HTML)
     
-    @app.on_message(filters.regex("^➕ Kanal qo'shish$") & filters.private)
-    async def add_ch(client, message):
-        if message.from_user.id != ADMIN_ID:
-            return
-        user_states[ADMIN_ID] = "add_ch"
-        await message.reply_text(
-            "➕ <b>Kanal:</b>\n\nUsername yuboring\n<code>@channel</code>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_cancel_keyboard()
-        )
+    @app.on_message(filters.command("search") & filters.user(ADMIN_ID))
+    async def search_command(client, message):
+        try:
+            user_id = int(message.text.split()[1])
+            user = search_user_by_id(user_id)
+            if user:
+                is_premium = "💎 Premium" if user[3] == 1 else "🆓 Oddiy"
+                premium_until = user[4].split('T')[0] if user[4] else "Yo'q"
+                text = (
+                    f"👤 <b>Foydalanuvchi ma'lumotlari:</b>\n\n"
+                    f"🆔 ID: <code>{user[0]}</code>\n"
+                    f"👤 Username: @{user[1] if user[1] else 'Yo\'q'}\n"
+                    f"📊 Limit: <b>{user[2]}/3</b>\n"
+                    f"💎 Status: <b>{is_premium}</b>\n"
+                    f"⏰ Premium tugash: <code>{premium_until}</code>\n"
+                    f"📅 Qo'shilgan: <code>{user[6].split('T')[0]}</code>\n"
+                    f"🕐 Oxirgi reset: <code>{user[5].split('T')[0]}</code>"
+                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💎 Premium berish", callback_data=f"give_prem:{user_id}")],
+                    [InlineKeyboardButton("🔄 Limitni tiklash", callback_data=f"reset_lim:{user_id}")],
+                    [InlineKeyboardButton("❌ Premium o'chirish", callback_data=f"rem_prem:{user_id}")]
+                ])
+                await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+            else:
+                await message.reply_text("❌ Foydalanuvchi topilmadi!")
+        except:
+            await message.reply_text("❌ To'g'ri format: /search [ID]")
     
-    @app.on_message(filters.regex("^➖ Kanal o'chirish$") & filters.private)
-    async def rem_ch(client, message):
-        if message.from_user.id != ADMIN_ID:
-            return
-        channels = get_channels()
+    @app.on_message(filters.command("channels") & filters.user(ADMIN_ID))
+    async def channels_command(client, message):
+        channels = get_channel_list()
         if not channels:
-            await message.reply_text("❌ Yo'q!", reply_markup=get_admin_keyboard())
+            await message.reply_text("❌ Kanallar yo'q!")
             return
-        user_states[ADMIN_ID] = "rem_ch"
-        text = "➖ <b>Kanal:</b>\n\nID:\n\n"
+        text = "📢 <b>Barcha kanallar:</b>\n\n"
         for ch in channels:
-            text += f"📢 {ch[1]} - <code>{ch[0]}</code>\n"
-        await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
+            text += f"📢 {ch[1]}\n   ID: <code>{ch[0]}</code>\n\n"
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("➖ Kanalni o'chirish", callback_data="show_del_ch")]])
+        await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     
-    @app.on_message(filters.regex("^💎 Premium berish$") & filters.private)
-    async def give_prem(client, message):
-        if message.from_user.id != ADMIN_ID:
+    @app.on_message(filters.command("topactive") & filters.user(ADMIN_ID))
+    async def topactive_command(client, message):
+        users = get_top_active_users(10)
+        if not users:
+            await message.reply_text("❌ Ma'lumot yo'q!")
             return
-        user_states[ADMIN_ID] = "give_prem"
-        await message.reply_text(
-            "💎 <b>Premium:</b>\n\nUser ID\n<code>123456</code>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_cancel_keyboard()
-        )
+        text = "🏆 <b>Eng faol foydalanuvchilar (bugun):</b>\n\n"
+        for i, u in enumerate(users, 1):
+            used = 3 - u[2]
+            username = f"@{u[1]}" if u[1] else "Username yo'q"
+            text += f"{i}. <code>{u[0]}</code> - {username}\n   🎨 Bugun: <b>{used}</b> ta rasm\n\n"
+        await message.reply_text(text, parse_mode=ParseMode.HTML)
     
-    @app.on_message(filters.regex("^📢 Reklama yuborish$") & filters.private)
-    async def send_ad(client, message):
-        if message.from_user.id != ADMIN_ID:
-            return
-        user_states[ADMIN_ID] = "send_ad"
-        await message.reply_text(
-            "📢 <b>Ad:</b>\n\nXabar",
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_cancel_keyboard()
-        )
+    @app.on_message(filters.command("removepremium") & filters.user(ADMIN_ID))
+    async def removepremium_command(client, message):
+        try:
+            user_id = int(message.text.split()[1])
+            remove_premium(user_id)
+            await message.reply_text(f"✅ User {user_id} dan Premium olib tashlandi!")
+        except:
+            await message.reply_text("❌ To'g'ri format: /removepremium [ID]")
     
-    @app.on_message(filters.regex("^🔙 Orqaga$") & filters.private)
-    async def back(client, message):
-        if message.from_user.id != ADMIN_ID:
-            return
-        user_states.pop(ADMIN_ID, None)
-        await message.reply_text("🏠 Menu", reply_markup=get_main_keyboard(ADMIN_ID))
+    @app.on_message(filters.command("resetlimit") & filters.user(ADMIN_ID))
+    async def resetlimit_command(client, message):
+        try:
+            user_id = int(message.text.split()[1])
+            reset_user_limit(user_id)
+            await message.reply_text(f"✅ User {user_id} limiti tiklandi (3/3)!")
+        except:
+            await message.reply_text("❌ To'g'ri format: /resetlimit [ID]")
     
-    @app.on_message(filters.user(ADMIN_ID) & filters.text & filters.private)
-    async def admin_text(client, message):
-        state = user_states.get(ADMIN_ID)
-        
-        if state == "add_ch":
-            try:
-                ch = message.text.strip()
-                chat = await client.get_chat(ch)
-                add_channel(str(chat.id), ch)
-                await message.reply_text(f"✅ Qo'shildi: {ch}", reply_markup=get_admin_keyboard())
-            except Exception as e:
-                await message.reply_text(f"❌ Xato: {str(e)}", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            
-        elif state == "rem_ch":
-            try:
-                remove_channel(message.text.strip())
-                await message.reply_text("✅ O'chirildi!", reply_markup=get_admin_keyboard())
-            except:
-                await message.reply_text("❌ Xato!", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            
-        elif state == "give_prem":
-            try:
-                uid = int(message.text.strip())
-                set_premium(uid, 30)
-                try:
-                    await client.send_message(uid, "🎉 Tabriklaymiz!\n\n💎 30 kunlik Premium!\n♾️ Cheksiz rasm!")
-                except:
-                    pass
-                await message.reply_text(f"✅ {uid} Premium!", reply_markup=get_admin_keyboard())
-            except:
-                await message.reply_text("❌ Xato ID!", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
-            
-        elif state == "send_ad":
-            users = get_all_users()
-            success = 0
-            failed = 0
-            status = await message.reply_text("📢 Yuborilmoqda...")
-            
-            for uid in users:
-                try:
-                    if message.photo:
-                        await client.send_photo(uid, message.photo.file_id, caption=message.caption)
-                    else:
-                        await client.send_message(uid, message.text)
-                    success += 1
-                    await asyncio.sleep(0.05)
-                except:
-                    failed += 1
-            
-            await status.edit_text(
-                f"✅ <b>Yuborildi!</b>\n\n"
-                f"📊 OK: <b>{success}</b>\n"
-                f"❌ Fail: <b>{failed}</b>",
-                parse_mode=ParseMode.HTML
+    @app.on_message(filters.command("backup") & filters.user(ADMIN_ID))
+    async def backup_command(client, message):
+        try:
+            total, premium, today, week, month, channels = get_advanced_stats()
+            backup_text = (
+                f"📦 Database Backup\n"
+                f"📅 Sana: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"👥 Jami: {total}\n"
+                f"💎 Premium: {premium}\n"
+                f"📢 Kanallar: {channels}\n"
             )
-            await message.reply_text("🏠 Menu", reply_markup=get_admin_keyboard())
-            user_states.pop(ADMIN_ID, None)
+            await message.reply_document(
+                document="database.db",
+                caption=backup_text,
+                file_name=f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            )
+        except Exception as e:
+            await message.reply_text(f"❌ Xatolik: {str(e)}")
+    
+    @app.on_callback_query(filters.regex("^give_prem:"))
+    async def give_prem_callback(client, callback_query):
+        if callback_query.from_user.id != ADMIN_ID:
+            return
+        user_id = int(callback_query.data.split(":")[1])
+        set_premium(user_id, 30)
+        await callback_query.answer("✅ Premium berildi!", show_alert=True)
+        try:
+            await client.send_message(user_id, "🎉 Sizga 30 kunlik Premium obuna berildi!\n♾️ Cheksiz rasm yarating!")
+        except:
+            pass
+    
+    @app.on_callback_query(filters.regex("^reset_lim:"))
+    async def reset_lim_callback(client, callback_query):
+        if callback_query.from_user.id != ADMIN_ID:
+            return
+        user_id = int(callback_query.data.split(":")[1])
+        reset_user_limit(user_id)
+        await callback_query.answer("✅ Limit tiklandi!", show_alert=True)
+    
+    @app.on_callback_query(filters.regex("^rem_prem:"))
+    async def rem_prem_callback(client, callback_query):
+        if callback_query.from_user.id != ADMIN_ID:
+            return
+        user_id = int(callback_query.data.split(":")[1])
+        remove_premium(user_id)
+        await callback_query.answer("✅ Premium o'chirildi!", show_alert=True)
+    
+    @app.on_callback_query(filters.regex("^show_del_ch$"))
+    async def show_del_ch_callback(client, callback_query):
+        if callback_query.from_user.id != ADMIN_ID:
+            return
+        channels = get_channel_list()
+        if not channels:
+            await callback_query.answer("❌ Kanallar yo'q!")
+            return
+        keyboard = []
+        for ch in channels:
+            keyboard.append([InlineKeyboardButton(f"🗑 {ch[1]}", callback_data=f"del_ch:{ch[0]}")])
+        keyboard.append([InlineKeyboardButton("❌ Yopish", callback_data="close_panel")])
+        await callback_query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    @app.on_callback_query(filters.regex("^del_ch:"))
+    async def del_ch_callback(client, callback_query):
+        if callback_query.from_user.id != ADMIN_ID:
+            return
+        ch_id = callback_query.data.split(":")[1]
+        remove_channel_db(ch_id)
+        await callback_query.answer("✅ Kanal o'chirildi!", show_alert=True)
+        channels = get_channel_list()
+        if channels:
+            keyboard = []
+            for ch in channels:
+                keyboard.append([InlineKeyboardButton(f"🗑 {ch[1]}", callback_data=f"del_ch:{ch[0]}")])
+            keyboard.append([InlineKeyboardButton("❌ Yopish", callback_data="close_panel")])
+            await callback_query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await callback_query.message.edit_text("✅ Barcha kanallar o'chirildi!")
+    
+    @app.on_callback_query(filters.regex("^close_panel$"))
+    async def close_panel_callback(client, callback_query):
+        if callback_query.from_user.id != ADMIN_ID:
+            return
+        await callback_query.message.delete()
+
+print("✅ Panel moduli yuklandi!")
