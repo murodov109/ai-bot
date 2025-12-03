@@ -110,9 +110,17 @@ async def check_subscription(client, user_id):
     for channel in channels:
         try:
             member = await client.get_chat_member(channel[0], user_id)
+            if member.status in ["left", "kicked", "restricted"]:
+                return False
             if member.status not in ["member", "administrator", "creator"]:
                 return False
-        except:
+        except Exception as e:
+            print(f"Subscription check error for channel {channel[0]}: {e}")
+            try:
+                chat = await client.get_chat(channel[0])
+                print(f"Channel info: {chat.title}, {chat.type}")
+            except:
+                pass
             return False
     return True
 
@@ -220,12 +228,28 @@ async def start_command(client, message):
 async def check_sub_callback(client, callback_query):
     user_id = callback_query.from_user.id
     username = callback_query.from_user.username or "Foydalanuvchi"
-    if await check_subscription(client, user_id):
+    
+    channels = get_channels()
+    not_subscribed = []
+    
+    for channel in channels:
+        try:
+            member = await client.get_chat_member(channel[0], user_id)
+            if member.status in ["left", "kicked", "restricted"]:
+                not_subscribed.append(channel[1])
+            elif member.status not in ["member", "administrator", "creator"]:
+                not_subscribed.append(channel[1])
+        except Exception as e:
+            print(f"Check error for {channel[0]}: {e}")
+            not_subscribed.append(channel[1])
+    
+    if not_subscribed:
+        channels_text = "\n".join([f"📢 {ch}" for ch in not_subscribed])
+        await callback_query.answer(f"❌ Iltimos quyidagi kanallarga obuna bo'ling:\n\n{channels_text}", show_alert=True)
+    else:
         await callback_query.answer("✅ Obuna tasdiqlandi!", show_alert=True)
         await callback_query.message.delete()
         await client.send_message(user_id, f"✅ Obuna tasdiqlandi!\n\n👋 Salom {username}!\n\n🎨 Men professional AI rasm yaratish botiman!\n🖼 Har qanday tasvirlangan rasmni yaratib beraman.\n🌐 Har qanday tilda yozishingiz mumkin!\n\n📝 Kerakli bo'limni tanlang:", reply_markup=get_main_keyboard(user_id))
-    else:
-        await callback_query.answer("❌ Siz hali barcha kanallarga obuna bo'lmagansiz!", show_alert=True)
 
 @app.on_message(filters.regex("^🎨 Rasm yaratish$") & filters.private)
 async def generate_image_button(client, message):
@@ -407,10 +431,18 @@ async def handle_messages(client, message):
             try:
                 ch_user = message.text.strip()
                 chat = await client.get_chat(ch_user)
+                
+                # Bot admin ekanligini tekshirish
+                bot_member = await client.get_chat_member(str(chat.id), (await client.get_me()).id)
+                if bot_member.status not in ["administrator", "creator"]:
+                    await message.reply_text("❌ Bot kanalda admin emas! Iltimos botni kanalga admin qiling.", reply_markup=get_admin_keyboard())
+                    user_states.pop(ADMIN_ID, None)
+                    return
+                
                 add_channel(str(chat.id), ch_user)
-                await message.reply_text(f"✅ Kanal qo'shildi: {ch_user}", reply_markup=get_admin_keyboard())
+                await message.reply_text(f"✅ Kanal qo'shildi: {ch_user}\n\n📊 Kanal: {chat.title}\n🆔 ID: {chat.id}\n\n⚠️ Bot kanalda admin ekanligi tasdiqlandi!", reply_markup=get_admin_keyboard())
             except Exception as e:
-                await message.reply_text(f"❌ Xatolik: {str(e)}", reply_markup=get_admin_keyboard())
+                await message.reply_text(f"❌ Xatolik: {str(e)}\n\nIltimos:\n1. Kanal username to'g'ri ekanligini tekshiring\n2. Bot kanalda admin ekanligini tekshiring\n3. Kanal public (ochiq) ekanligini tekshiring", reply_markup=get_admin_keyboard())
             user_states.pop(ADMIN_ID, None)
             return
         elif state == "waiting_channel_remove":
